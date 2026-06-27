@@ -100,6 +100,24 @@ export function ConferenciaNF() {
     }
   }
 
+  async function verPreviewCsv() {
+    if (!arquivo) { setErro('Selecione o arquivo CSV primeiro.'); return; }
+    setCarregando(true);
+    setErro('');
+    try {
+      const csv = await arquivo.text();
+      const r = await api<unknown>('/api/financeiro/debug/preview-csv', {
+        method: 'POST',
+        body: JSON.stringify({ empresa, csv }),
+      });
+      setErro(JSON.stringify(r, null, 2));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
   async function verAmostra() {
     setCarregando(true);
     setErro('');
@@ -238,6 +256,13 @@ export function ConferenciaNF() {
             className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
           >
             Ver amostra NFS-e
+          </button>
+          <button
+            onClick={verPreviewCsv}
+            disabled={carregando || !arquivo}
+            className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
+          >
+            Preview CSV
           </button>
           {arquivo && (
             <span className="text-xs text-gray-400">

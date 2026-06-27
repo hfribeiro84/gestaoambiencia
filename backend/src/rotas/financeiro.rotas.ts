@@ -44,6 +44,29 @@ rotasFinanceiro.get('/financeiro/debug/explorar/:empresa', autenticar, async (re
 });
 
 /**
+ * POST /api/financeiro/debug/preview-csv
+ * Mostra o que o parser extrai do CSV + as primeiras linhas brutas.
+ */
+rotasFinanceiro.post('/financeiro/debug/preview-csv', autenticar, async (req, res) => {
+  const { empresa, csv } = req.body as { empresa: string; csv: string };
+  try {
+    const { parseCsvAss, parseCsvNetr } = await import('../modulos/financeiro/nfParser');
+    const { parse } = await import('csv-parse/sync');
+
+    const linhasBrutas = (parse(csv, { skip_empty_lines: false, relax_column_count: true, relax_quotes: true }) as string[][]).slice(0, 4);
+    const planilha = empresa === 'ass' ? parseCsvAss(csv) : parseCsvNetr(csv);
+
+    res.json({
+      totalItens: planilha.length,
+      primeiros3: planilha.slice(0, 3),
+      linhasBrutas,
+    });
+  } catch (e) {
+    res.json({ erro: (e as Error).message });
+  }
+});
+
+/**
  * GET /api/financeiro/debug/amostra/:empresa
  * Retorna as primeiras 2 NFS-e do mês atual para inspecionar a estrutura.
  */

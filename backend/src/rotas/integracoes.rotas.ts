@@ -47,11 +47,11 @@ rotasIntegracoes.post('/integracoes/:provedor/configurar', autenticar, async (re
 
   try {
     if (provedor === 'pipedrive') {
-      if (!corpo.api_token || !corpo.dominio) {
-        res.status(400).json({ erro: 'Campos obrigatórios: api_token, dominio.' });
+      if (!corpo.api_token) {
+        res.status(400).json({ erro: 'Campo obrigatório: api_token.' });
         return;
       }
-      await pipedrive.configurar(corpo.api_token, corpo.dominio);
+      await pipedrive.configurar(corpo.api_token);
     } else if (provedor === 'clockify') {
       if (!corpo.api_key) {
         res.status(400).json({ erro: 'Campo obrigatório: api_key.' });

@@ -38,7 +38,6 @@ const COR: Record<string, string> = {
 const FORMULARIOS: Record<string, { label: string; campo: string; tipo?: string }[]> = {
   pipedrive: [
     { label: 'API Token', campo: 'api_token', tipo: 'password' },
-    { label: 'Domínio (ex: https://suaempresa.pipedrive.com)', campo: 'dominio' },
   ],
   clockify: [
     { label: 'API Key', campo: 'api_key', tipo: 'password' },

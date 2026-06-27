@@ -29,9 +29,8 @@ export const env = {
   claudeModeloRapido: ler('CLAUDE_MODELO_RAPIDO', 'claude-haiku-4-5-20251001'),
   claudeModeloAvancado: ler('CLAUDE_MODELO_AVANCADO', 'claude-sonnet-4-6'),
 
-  // Pipedrive
+  // Pipedrive (URL base fixa: https://api.pipedrive.com/v1)
   pipedriveApiToken: ler('PIPEDRIVE_API_TOKEN'),
-  pipedriveDominio: ler('PIPEDRIVE_DOMINIO'),
 
   // Clockify
   clockifyApiKey: ler('CLOCKIFY_API_KEY'),

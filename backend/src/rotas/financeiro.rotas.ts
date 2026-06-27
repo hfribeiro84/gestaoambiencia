@@ -55,10 +55,10 @@ rotasFinanceiro.get('/financeiro/debug/amostra/:empresa', autenticar, async (req
 
   try {
     const r = await chamadaApi(conta, '/v1/notas-fiscais-servico', {
-      dataEmissaoInicio: inicio,
-      dataEmissaoFim: fim,
-      pagina: '0',
-      tamanhoPagina: '2',
+      data_competencia_de: inicio,
+      data_competencia_ate: fim,
+      pagina: '1',
+      tamanho_pagina: '2',
     });
     const texto = await r.text();
     res.json({ status: r.status, corpo: JSON.parse(texto) });

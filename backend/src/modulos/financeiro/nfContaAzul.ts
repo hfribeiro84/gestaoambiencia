@@ -1,86 +1,88 @@
 /**
- * Busca as NFs emitidas no Conta Azul para um dado mês.
+ * Busca NFS-e emitidas no Conta Azul para um dado mês.
  *
- * Endpoint: GET /v1/service-invoices
- * Parâmetros: emit_date_begin, emit_date_end, status=ISSUED, page, per_page
- *
- * Se o endpoint estiver diferente na API do Conta Azul contratado, ajustar
- * a constante ENDPOINT abaixo.
+ * Endpoint: GET /v1/notas-fiscais-servico
+ * Limite da API: range máximo de 15 dias por requisição.
+ * Solução: duas chamadas por mês (dias 1-15 e 16-último).
  */
 import { chamadaApi } from '../../integracoes/contaAzul';
 import type { Empresa, NfEmitida } from './nfTypes';
 
 const ENDPOINT = '/v1/notas-fiscais-servico';
 
-function diasNoMes(mes: number, ano: number): string {
-  return String(new Date(ano, mes, 0).getDate()).padStart(2, '0');
+const STATUS_VALIDOS = new Set(['EMITIDA', 'CORRIGIDA_SUCESSO']);
+
+interface ItemNfse {
+  id: string;
+  numero_nfse: number;
+  data_competencia: string;
+  status: string;
+  nome_cliente: string;
+  documento_cliente: string;
+  valor_total_nfse: number;
 }
 
-function normCnpj(v: string): string {
-  return (v ?? '').replace(/\D/g, '');
+interface RespostaNfse {
+  itens: ItemNfse[];
+  paginacao: {
+    pagina_atual: number;
+    total_paginas: number;
+    total_itens: number;
+  };
 }
 
-function extrairCampo(obj: Record<string, unknown>, ...chaves: string[]): string {
-  for (const k of chaves) {
-    const v = obj[k];
-    if (v !== undefined && v !== null) return String(v);
-  }
-  return '';
+function periodos(mes: number, ano: number): { de: string; ate: string }[] {
+  const mm = String(mes).padStart(2, '0');
+  const ultimo = String(new Date(ano, mes, 0).getDate()).padStart(2, '0');
+  return [
+    { de: `${ano}-${mm}-01`, ate: `${ano}-${mm}-15` },
+    { de: `${ano}-${mm}-16`, ate: `${ano}-${mm}-${ultimo}` },
+  ];
 }
 
 export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: number): Promise<NfEmitida[]> {
   const conta = empresa === 'ass' ? 'ass' : 'netr';
-  const inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
-  const fim = `${ano}-${String(mes).padStart(2, '0')}-${diasNoMes(mes, ano)}`;
-
   const nfs: NfEmitida[] = [];
-  let page = 0;
+  const idsVistos = new Set<string>();
 
-  while (true) {
-    const resp = await chamadaApi(conta, ENDPOINT, {
-      dataEmissaoInicio: inicio,
-      dataEmissaoFim: fim,
-      pagina: String(page),
-      tamanhoPagina: '100',
-    });
+  for (const periodo of periodos(mes, ano)) {
+    let pagina = 1;
 
-    if (!resp.ok) {
-      const corpo = await resp.text();
-      throw new Error(`Conta Azul API ${resp.status}: ${corpo.slice(0, 200)}`);
-    }
-
-    const data = await resp.json() as unknown;
-    const items: Record<string, unknown>[] = Array.isArray(data)
-      ? (data as Record<string, unknown>[])
-      : ((data as Record<string, unknown>).data as Record<string, unknown>[] ?? []);
-
-    if (items.length === 0) break;
-
-    for (const item of items) {
-      const customer = (item.customer ?? {}) as Record<string, unknown>;
-      const valorBruto =
-        Number(item.value ?? item.gross_value ?? item.services_amount ?? 0);
-
-      nfs.push({
-        id: extrairCampo(item, 'id'),
-        numero: extrairCampo(item, 'number', 'numero'),
-        dataEmissao: extrairCampo(item, 'issue_date', 'emit_date', 'data_emissao'),
-        status: extrairCampo(item, 'status'),
-        cliente: extrairCampo(customer, 'name', 'nome') || extrairCampo(item, 'customer_name'),
-        cnpj: normCnpj(
-          extrairCampo(customer, 'identity', 'document', 'cpf_cnpj') ||
-          extrairCampo(item, 'customer_identity', 'customer_document'),
-        ),
-        valor: valorBruto,
-        descricao: extrairCampo(item, 'description', 'descricao', 'observations'),
+    while (true) {
+      const resp = await chamadaApi(conta, ENDPOINT, {
+        data_competencia_de: periodo.de,
+        data_competencia_ate: periodo.ate,
+        pagina: String(pagina),
+        tamanho_pagina: '100',
       });
-    }
 
-    // Verifica se há mais páginas
-    const total = Number((data as Record<string, unknown>).total ?? (data as Record<string, unknown>).total_count ?? NaN);
-    if (!isNaN(total) && nfs.length >= total) break;
-    if (items.length < 100) break;
-    page++;
+      if (!resp.ok) {
+        const corpo = await resp.text();
+        throw new Error(`Conta Azul API ${resp.status}: ${corpo.slice(0, 300)}`);
+      }
+
+      const data = (await resp.json()) as RespostaNfse;
+      const itens = data.itens ?? [];
+
+      for (const item of itens) {
+        if (idsVistos.has(item.id)) continue;
+        idsVistos.add(item.id);
+        if (!STATUS_VALIDOS.has(item.status)) continue;
+
+        nfs.push({
+          id: item.id,
+          numero: String(item.numero_nfse ?? ''),
+          dataEmissao: item.data_competencia ?? '',
+          status: item.status,
+          cliente: item.nome_cliente ?? '',
+          cnpj: (item.documento_cliente ?? '').replace(/\D/g, ''),
+          valor: item.valor_total_nfse ?? 0,
+        });
+      }
+
+      if (pagina >= (data.paginacao?.total_paginas ?? 1)) break;
+      pagina++;
+    }
   }
 
   return nfs;

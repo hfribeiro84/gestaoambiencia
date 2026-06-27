@@ -75,7 +75,8 @@ export function ConferenciaNF() {
   const [empresa, setEmpresa] = useState<Empresa>('ass');
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [ano, setAno] = useState(anoAtual);
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [nomeArquivo, setNomeArquivo] = useState('');
+  const [csvContent, setCsvContent] = useState('');
   const [carregando, setCarregando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
   const [erro, setErro] = useState('');
@@ -101,11 +102,11 @@ export function ConferenciaNF() {
   }
 
   async function verPreviewCsv() {
-    if (!arquivo) { setErro('Selecione o arquivo CSV primeiro.'); return; }
+    if (!csvContent) { setErro('Selecione o arquivo CSV primeiro.'); return; }
     setCarregando(true);
     setErro('');
     try {
-      const csv = await arquivo.text();
+      const csv = csvContent;
       const r = await api<unknown>('/api/financeiro/debug/preview-csv', {
         method: 'POST',
         body: JSON.stringify({ empresa, csv }),
@@ -134,13 +135,13 @@ export function ConferenciaNF() {
   }
 
   async function conferir() {
-    if (!arquivo) { setErro('Selecione o arquivo CSV.'); return; }
+    if (!csvContent) { setErro('Selecione o arquivo CSV.'); return; }
     setCarregando(true);
     setErro('');
     setResultado(null);
 
     try {
-      const csv = await arquivo.text();
+      const csv = csvContent;
       const r = await api<ResultadoConferencia>('/api/financeiro/nf/conferir', {
         method: 'POST',
         body: JSON.stringify({ empresa, mes, ano, csv }),
@@ -177,7 +178,7 @@ export function ConferenciaNF() {
               {(['ass', 'netr'] as Empresa[]).map((e) => (
                 <button
                   key={e}
-                  onClick={() => { setEmpresa(e); setArquivo(null); setResultado(null); }}
+                  onClick={() => { setEmpresa(e); setNomeArquivo(''); setCsvContent(''); setResultado(null); }}
                   className={`flex-1 py-2 rounded text-sm font-medium border transition-colors ${
                     empresa === e
                       ? 'bg-ambiencia text-white border-ambiencia'
@@ -224,13 +225,23 @@ export function ConferenciaNF() {
               type="file"
               accept=".csv"
               className="hidden"
-              onChange={(e) => { setArquivo(e.target.files?.[0] ?? null); setResultado(null); }}
+              onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                setNomeArquivo(file.name);
+                setCsvContent(await file.text());
+              } else {
+                setNomeArquivo('');
+                setCsvContent('');
+              }
+              setResultado(null);
+            }}
             />
             <button
               onClick={() => inputRef.current?.click()}
               className="w-full border rounded px-2 py-2 text-sm text-left truncate text-gray-600 hover:border-ambiencia"
             >
-              {arquivo ? arquivo.name : 'Selecionar arquivo...'}
+              {nomeArquivo || 'Selecionar arquivo...'}
             </button>
           </div>
         </div>
@@ -238,7 +249,7 @@ export function ConferenciaNF() {
         <div className="mt-4 flex gap-3 items-center flex-wrap">
           <button
             onClick={conferir}
-            disabled={carregando || !arquivo}
+            disabled={carregando || !csvContent}
             className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50"
           >
             {carregando ? 'Consultando...' : 'Conferir'}
@@ -259,12 +270,12 @@ export function ConferenciaNF() {
           </button>
           <button
             onClick={verPreviewCsv}
-            disabled={carregando || !arquivo}
+            disabled={carregando || !csvContent}
             className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
           >
             Preview CSV
           </button>
-          {arquivo && (
+          {csvContent && (
             <span className="text-xs text-gray-400">
               {empresa.toUpperCase()} — {MESES[mes - 1]}/{ano}
             </span>

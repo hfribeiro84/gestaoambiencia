@@ -82,6 +82,29 @@ export function ConferenciaNF() {
   const [filtro, setFiltro] = useState<StatusConferencia | 'todos'>('todos');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  async function diagnosticar() {
+    setCarregando(true);
+    setErro('');
+    try {
+      const r = await api<{ path: string; status: number; trecho: string }[]>(
+        `/api/financeiro/debug/explorar/${empresa}`,
+      );
+      const ok = r.filter((x) => x.status === 200);
+      const resumo = r
+        .map((x) => `${x.status === 200 ? '✅' : '❌'} ${x.path} → HTTP ${x.status}`)
+        .join('\n');
+      setErro(
+        ok.length > 0
+          ? `Endpoint encontrado:\n${resumo}`
+          : `Nenhum endpoint válido encontrado:\n${resumo}`,
+      );
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
   async function conferir() {
     if (!arquivo) { setErro('Selecione o arquivo CSV.'); return; }
     setCarregando(true);
@@ -184,13 +207,20 @@ export function ConferenciaNF() {
           </div>
         </div>
 
-        <div className="mt-4 flex gap-3 items-center">
+        <div className="mt-4 flex gap-3 items-center flex-wrap">
           <button
             onClick={conferir}
             disabled={carregando || !arquivo}
             className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50"
           >
             {carregando ? 'Consultando...' : 'Conferir'}
+          </button>
+          <button
+            onClick={diagnosticar}
+            disabled={carregando}
+            className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
+          >
+            Testar API Conta Azul
           </button>
           {arquivo && (
             <span className="text-xs text-gray-400">
@@ -199,7 +229,7 @@ export function ConferenciaNF() {
           )}
         </div>
 
-        {erro && <p className="mt-3 text-sm text-red-600">{erro}</p>}
+        {erro && <pre className="mt-3 text-sm text-gray-700 bg-gray-50 border rounded p-3 whitespace-pre-wrap">{erro}</pre>}
       </div>
 
       {/* Resultado */}

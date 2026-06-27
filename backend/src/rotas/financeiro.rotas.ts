@@ -27,19 +27,23 @@ const CANDIDATOS = [
 ];
 
 rotasFinanceiro.get('/financeiro/debug/explorar/:empresa', autenticar, async (req, res) => {
-  const conta = req.params.empresa === 'ass' ? 'ass' : 'netr';
-  const resultados: { path: string; status: number; trecho: string }[] = [];
+  const conta = (req.params.empresa === 'ass' ? 'ass' : 'netr') as 'ass' | 'netr';
 
-  for (const path of CANDIDATOS) {
+  async function testar(path: string): Promise<{ path: string; status: number; trecho: string }> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
-      const r = await chamadaApi(conta as 'ass' | 'netr', path, { page: '0', per_page: '1' });
+      const r = await chamadaApi(conta, path, { page: '0', per_page: '1' });
+      clearTimeout(timer);
       const texto = await r.text();
-      resultados.push({ path, status: r.status, trecho: texto.slice(0, 200) });
+      return { path, status: r.status, trecho: texto.slice(0, 300) };
     } catch (e) {
-      resultados.push({ path, status: 0, trecho: (e as Error).message });
+      clearTimeout(timer);
+      return { path, status: 0, trecho: (e as Error).message.slice(0, 200) };
     }
   }
 
+  const resultados = await Promise.all(CANDIDATOS.map(testar));
   res.json(resultados);
 });
 

@@ -6,6 +6,7 @@ import { Layout } from './componentes/Layout';
 import { Login } from './paginas/Login';
 import { Dashboard } from './paginas/Dashboard';
 import { Integracoes } from './paginas/Integracoes';
+import { ConferenciaNF } from './paginas/financeiro/ConferenciaNF';
 
 export default function App() {
   return (
@@ -29,6 +30,16 @@ export default function App() {
               <RotaProtegida>
                 <Layout>
                   <Integracoes />
+                </Layout>
+              </RotaProtegida>
+            }
+          />
+          <Route
+            path="/financeiro/conferencia-nf"
+            element={
+              <RotaProtegida>
+                <Layout>
+                  <ConferenciaNF />
                 </Layout>
               </RotaProtegida>
             }

@@ -11,6 +11,7 @@ import { env } from './config/env';
 import { rotasSaude } from './rotas/saude.rotas';
 import { rotasAuth } from './rotas/auth.rotas';
 import { rotasIntegracoes } from './rotas/integracoes.rotas';
+import { rotasFinanceiro } from './rotas/financeiro.rotas';
 import { tratadorDeErros } from './middleware/erros';
 import { executarSincronizacao } from './servicos/sincronizacao';
 
@@ -24,6 +25,7 @@ app.use(express.json());
 app.use('/api', rotasSaude);
 app.use('/api', rotasAuth);
 app.use('/api', rotasIntegracoes);
+app.use('/api', rotasFinanceiro);
 
 // Tratador de erros (sempre por último).
 app.use(tratadorDeErros);

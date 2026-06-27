@@ -128,6 +128,62 @@ export async function trocarCodigoPorToken(conta: ContaAzul, code: string): Prom
   });
 }
 
+/** Retorna um access token válido, renovando via refresh_token se necessário. */
+export async function obterTokenValido(conta: ContaAzul): Promise<string> {
+  const prov = provedor(conta);
+  const cred = await lerCredencial(prov);
+
+  if (!cred?.access_token) {
+    throw new Error(`Conta Azul ${conta.toUpperCase()} não autorizada. Clique em "Conectar".`);
+  }
+
+  // Ainda dentro do prazo (margem de 5 min)?
+  const expira = cred.expira_em as number | undefined;
+  const expirado = expira ? Date.now() > expira - 5 * 60 * 1000 : false;
+
+  if (!expirado) return cred.access_token as string;
+
+  // Refresh
+  if (!cred.refresh_token) {
+    throw new Error(`Token expirado. Reconecte o Conta Azul ${conta.toUpperCase()}.`);
+  }
+  const cfg = await resolverAppConfig(conta);
+  if (!cfg) throw new Error(`App OAuth do Conta Azul ${conta.toUpperCase()} não configurado.`);
+
+  const auth = Buffer.from(`${cfg.client_id}:${cfg.client_secret}`).toString('base64');
+  const resp = await fetch(cfg.token_url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${auth}` },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: cred.refresh_token as string }),
+  });
+  if (!resp.ok) throw new Error(`Falha ao renovar token Conta Azul ${conta.toUpperCase()}: HTTP ${resp.status}`);
+
+  const tk = (await resp.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+  const atual = await lerCredencial(prov);
+  await salvarCredencial(prov, 'oauth2', {
+    ...(atual ?? {}),
+    access_token: tk.access_token,
+    refresh_token: tk.refresh_token ?? (cred.refresh_token as string),
+    expira_em: tk.expires_in ? Date.now() + tk.expires_in * 1000 : undefined,
+  });
+  return tk.access_token;
+}
+
+/** Executa uma chamada autenticada à API do Conta Azul. */
+export async function chamadaApi(
+  conta: ContaAzul,
+  endpoint: string,
+  params?: Record<string, string>,
+): Promise<Response> {
+  const token = await obterTokenValido(conta);
+  const cfg = await resolverAppConfig(conta);
+  if (!cfg) throw new Error(`Conta Azul ${conta.toUpperCase()} sem configuração de API.`);
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return fetch(`${cfg.api_base}${endpoint}${qs}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+}
+
 /** Testa a conexão: app configurado + token válido respondendo à API. */
 export async function testarConexao(conta: ContaAzul): Promise<ResultadoTeste> {
   const prov = provedor(conta);

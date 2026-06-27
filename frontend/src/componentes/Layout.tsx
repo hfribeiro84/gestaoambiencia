@@ -11,7 +11,11 @@ import { useAuth } from '../contextos/AuthContext';
 const itensMenu = [
   { rotulo: 'Dashboard', caminho: '/', ativo: true },
   { rotulo: 'Integrações', caminho: '/integracoes', ativo: true },
-  { rotulo: 'Financeiro', caminho: '/financeiro', ativo: false },
+  { rotulo: '— Financeiro —', caminho: '', ativo: false, separador: true },
+  { rotulo: 'Conferência de NF', caminho: '/financeiro/conferencia-nf', ativo: true },
+  { rotulo: 'DRE Gerencial', caminho: '/financeiro/dre', ativo: false },
+  { rotulo: 'Sistema de Rateio', caminho: '/financeiro/rateio', ativo: false },
+  { rotulo: '— Outros módulos —', caminho: '', ativo: false, separador: true },
   { rotulo: 'Resultado por Projeto', caminho: '/projetos', ativo: false },
   { rotulo: 'Contratos', caminho: '/contratos', ativo: false },
   { rotulo: 'Unidades NETR', caminho: '/unidades', ativo: false },
@@ -31,8 +35,12 @@ export function Layout({ children }: { children: ReactNode }) {
           <div className="text-xs text-slate-400">ASS + NETResíduos</div>
         </div>
         <nav className="flex-1 px-2 py-3 space-y-1">
-          {itensMenu.map((item) =>
-            item.ativo ? (
+          {itensMenu.map((item, idx) =>
+            (item as { separador?: boolean }).separador ? (
+              <div key={idx} className="px-3 pt-4 pb-1 text-xs text-slate-500 font-semibold tracking-wide">
+                {item.rotulo}
+              </div>
+            ) : item.ativo ? (
               <Link
                 key={item.caminho}
                 to={item.caminho}
@@ -46,7 +54,7 @@ export function Layout({ children }: { children: ReactNode }) {
               </Link>
             ) : (
               <span
-                key={item.caminho}
+                key={item.caminho || idx}
                 className="block px-3 py-2 rounded text-sm text-slate-500 cursor-not-allowed"
                 title="Em breve"
               >

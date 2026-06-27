@@ -89,15 +89,25 @@ export function ConferenciaNF() {
       const r = await api<{ path: string; status: number; trecho: string }[]>(
         `/api/financeiro/debug/explorar/${empresa}`,
       );
-      const ok = r.filter((x) => x.status === 200);
       const resumo = r
         .map((x) => `${x.status === 200 ? '✅' : '❌'} ${x.path} → HTTP ${x.status}`)
         .join('\n');
-      setErro(
-        ok.length > 0
-          ? `Endpoint encontrado:\n${resumo}`
-          : `Nenhum endpoint válido encontrado:\n${resumo}`,
+      setErro(resumo);
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function verAmostra() {
+    setCarregando(true);
+    setErro('');
+    try {
+      const r = await api<{ status: number; corpo: unknown; erro?: string }>(
+        `/api/financeiro/debug/amostra/${empresa}`,
       );
+      setErro(JSON.stringify(r, null, 2));
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -220,7 +230,14 @@ export function ConferenciaNF() {
             disabled={carregando}
             className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
           >
-            Testar API Conta Azul
+            Testar endpoints
+          </button>
+          <button
+            onClick={verAmostra}
+            disabled={carregando}
+            className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
+          >
+            Ver amostra NFS-e
           </button>
           {arquivo && (
             <span className="text-xs text-gray-400">

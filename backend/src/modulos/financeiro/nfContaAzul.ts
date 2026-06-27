@@ -10,7 +10,7 @@
 import { chamadaApi } from '../../integracoes/contaAzul';
 import type { Empresa, NfEmitida } from './nfTypes';
 
-const ENDPOINT = '/v1/service-invoices';
+const ENDPOINT = '/v1/notas-fiscais-servico';
 
 function diasNoMes(mes: number, ano: number): string {
   return String(new Date(ano, mes, 0).getDate()).padStart(2, '0');
@@ -38,11 +38,10 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
 
   while (true) {
     const resp = await chamadaApi(conta, ENDPOINT, {
-      emit_date_begin: inicio,
-      emit_date_end: fim,
-      status: 'ISSUED',
-      page: String(page),
-      per_page: '100',
+      dataEmissaoInicio: inicio,
+      dataEmissaoFim: fim,
+      pagina: String(page),
+      tamanhoPagina: '100',
     });
 
     if (!resp.ok) {

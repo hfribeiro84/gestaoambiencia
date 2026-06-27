@@ -14,18 +14,12 @@ export const rotasFinanceiro = Router();
  * Usar só para diagnosticar o endpoint correto das NFs.
  */
 const CANDIDATOS = [
-  '/v1/pessoa',               // controle — deve retornar 200
+  '/v1/pessoa',
+  '/v1/notas-fiscais-servico',
+  '/v1/notas-fiscais',
   '/v1/conta-receber',
   '/v1/lancamento',
   '/v1/venda',
-  '/v1/servico',
-  '/v1/produto',
-  '/v1/nota-servico',
-  '/v1/nota-fiscal-servico',
-  '/v1/notas-fiscais',
-  '/v1/nfse',
-  '/v1/nfs-e',
-  '/v1/service-invoices',
 ];
 
 rotasFinanceiro.get('/financeiro/debug/explorar/:empresa', autenticar, async (req, res) => {
@@ -47,6 +41,30 @@ rotasFinanceiro.get('/financeiro/debug/explorar/:empresa', autenticar, async (re
 
   const resultados = await Promise.all(CANDIDATOS.map(testar));
   res.json(resultados);
+});
+
+/**
+ * GET /api/financeiro/debug/amostra/:empresa
+ * Retorna as primeiras 2 NFS-e do mês atual para inspecionar a estrutura.
+ */
+rotasFinanceiro.get('/financeiro/debug/amostra/:empresa', autenticar, async (req, res) => {
+  const conta = (req.params.empresa === 'ass' ? 'ass' : 'netr') as 'ass' | 'netr';
+  const hoje = new Date();
+  const inicio = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
+  const fim = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+
+  try {
+    const r = await chamadaApi(conta, '/v1/notas-fiscais-servico', {
+      dataEmissaoInicio: inicio,
+      dataEmissaoFim: fim,
+      pagina: '0',
+      tamanhoPagina: '2',
+    });
+    const texto = await r.text();
+    res.json({ status: r.status, corpo: JSON.parse(texto) });
+  } catch (e) {
+    res.json({ erro: (e as Error).message });
+  }
 });
 
 /**

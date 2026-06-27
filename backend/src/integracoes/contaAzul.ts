@@ -89,7 +89,6 @@ export async function urlAutorizacao(conta: ContaAzul): Promise<string> {
     response_type: 'code',
     client_id: cfg.client_id,
     redirect_uri: redirectUri(conta),
-    scope: 'openid profile',
     state: provedor(conta),
   });
   return `${cfg.authorize_url}?${params.toString()}`;

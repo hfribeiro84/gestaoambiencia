@@ -14,16 +14,18 @@ export const rotasFinanceiro = Router();
  * Usar só para diagnosticar o endpoint correto das NFs.
  */
 const CANDIDATOS = [
-  '/v1/service-invoices',
-  '/v1/nota-fiscal',
-  '/v1/nota-fiscal/nfse',
+  '/v1/pessoa',               // controle — deve retornar 200
+  '/v1/conta-receber',
+  '/v1/lancamento',
+  '/v1/venda',
+  '/v1/servico',
+  '/v1/produto',
+  '/v1/nota-servico',
+  '/v1/nota-fiscal-servico',
+  '/v1/notas-fiscais',
   '/v1/nfse',
-  '/v1/invoices',
-  '/v1/sales',
-  '/v1/accounts-receivable',
-  '/v1/contas-receber',
-  '/v1/receivables',
-  '/v1/financial/receivables',
+  '/v1/nfs-e',
+  '/v1/service-invoices',
 ];
 
 rotasFinanceiro.get('/financeiro/debug/explorar/:empresa', autenticar, async (req, res) => {

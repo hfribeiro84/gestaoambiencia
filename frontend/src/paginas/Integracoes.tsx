@@ -43,13 +43,13 @@ const FORMULARIOS: Record<string, { label: string; campo: string; tipo?: string;
   conta_azul_ass: [
     { label: 'Client ID', campo: 'client_id', placeholder: 'ID do app OAuth no portal Conta Azul' },
     { label: 'Client Secret', campo: 'client_secret', tipo: 'password', placeholder: 'Secret do app OAuth' },
-    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/oauth2/authorize' },
+    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/login' },
     { label: 'Token URL (opcional)', campo: 'token_url', placeholder: 'https://auth.contaazul.com/oauth2/token' },
   ],
   conta_azul_netr: [
     { label: 'Client ID', campo: 'client_id', placeholder: 'ID do app OAuth no portal Conta Azul' },
     { label: 'Client Secret', campo: 'client_secret', tipo: 'password', placeholder: 'Secret do app OAuth' },
-    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/oauth2/authorize' },
+    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/login' },
     { label: 'Token URL (opcional)', campo: 'token_url', placeholder: 'https://auth.contaazul.com/oauth2/token' },
   ],
   pipedrive: [

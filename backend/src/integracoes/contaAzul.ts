@@ -27,7 +27,7 @@ interface AppConfig {
 
 /** Configuração padrão (URLs conhecidas; client_id/secret vêm do banco ou env). */
 const DEFAULTS = {
-  authorize_url: 'https://auth.contaazul.com/oauth2/authorize',
+  authorize_url: 'https://auth.contaazul.com/login',
   token_url: 'https://auth.contaazul.com/oauth2/token',
   api_base: 'https://api-v2.contaazul.com',
 };

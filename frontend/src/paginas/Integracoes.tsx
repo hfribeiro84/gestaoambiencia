@@ -26,7 +26,11 @@ const NOMES: Record<string, string> = {
   claude: 'Claude (IA)',
 };
 
+// Provedores que usam fluxo OAuth (botão "Conectar").
 const OAUTH = ['conta_azul_ass', 'conta_azul_netr', 'google_drive'];
+
+// Provedores que precisam de formulário para configurar credenciais antes de conectar.
+const OAUTH_COM_CONFIG = ['conta_azul_ass', 'conta_azul_netr'];
 
 const COR: Record<string, string> = {
   ok: 'bg-green-100 text-green-800',
@@ -34,8 +38,20 @@ const COR: Record<string, string> = {
   erro: 'bg-red-100 text-red-800',
 };
 
-// Campos dos formulários de chave simples por provedor.
-const FORMULARIOS: Record<string, { label: string; campo: string; tipo?: string }[]> = {
+// Campos dos formulários de configuração por provedor.
+const FORMULARIOS: Record<string, { label: string; campo: string; tipo?: string; placeholder?: string }[]> = {
+  conta_azul_ass: [
+    { label: 'Client ID', campo: 'client_id', placeholder: 'ID do app OAuth no portal Conta Azul' },
+    { label: 'Client Secret', campo: 'client_secret', tipo: 'password', placeholder: 'Secret do app OAuth' },
+    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/oauth2/authorize' },
+    { label: 'Token URL (opcional)', campo: 'token_url', placeholder: 'https://auth.contaazul.com/oauth2/token' },
+  ],
+  conta_azul_netr: [
+    { label: 'Client ID', campo: 'client_id', placeholder: 'ID do app OAuth no portal Conta Azul' },
+    { label: 'Client Secret', campo: 'client_secret', tipo: 'password', placeholder: 'Secret do app OAuth' },
+    { label: 'Authorize URL (opcional)', campo: 'authorize_url', placeholder: 'https://auth.contaazul.com/oauth2/authorize' },
+    { label: 'Token URL (opcional)', campo: 'token_url', placeholder: 'https://auth.contaazul.com/oauth2/token' },
+  ],
   pipedrive: [
     { label: 'API Token', campo: 'api_token', tipo: 'password' },
   ],
@@ -147,8 +163,20 @@ export function Integracoes() {
               <p className="text-sm text-gray-600 mt-1">{it.mensagem}</p>
               {it.detalhe && <p className="text-xs text-gray-400 mt-1">{it.detalhe}</p>}
 
-              <div className="mt-3 flex gap-3">
-                {/* Provedores OAuth: botão que redireciona ao fluxo */}
+              <div className="mt-3 flex gap-3 flex-wrap">
+                {/* Formulário de configuração (todos os provedores com FORMULARIOS) */}
+                {FORMULARIOS[it.provedor] && (
+                  <button
+                    onClick={() => abrirForm(it.provedor)}
+                    className="text-sm text-ambiencia underline"
+                  >
+                    {it.status === 'ok' && !OAUTH_COM_CONFIG.includes(it.provedor)
+                      ? 'Atualizar credencial'
+                      : 'Configurar app'}
+                  </button>
+                )}
+
+                {/* Botão OAuth: só aparece após o app estar configurado (ou para google_drive) */}
                 {OAUTH.includes(it.provedor) && (
                   <a
                     href={`${urlBackend}/api/integracoes/${it.provedor}/conectar`}
@@ -156,16 +184,6 @@ export function Integracoes() {
                   >
                     {it.status === 'ok' ? 'Reconectar' : 'Conectar'}
                   </a>
-                )}
-
-                {/* Provedores de chave simples: formulário inline */}
-                {FORMULARIOS[it.provedor] && (
-                  <button
-                    onClick={() => abrirForm(it.provedor)}
-                    className="text-sm text-ambiencia underline"
-                  >
-                    {it.status === 'ok' ? 'Atualizar credencial' : 'Configurar'}
-                  </button>
                 )}
               </div>
 

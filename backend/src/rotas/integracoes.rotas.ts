@@ -64,6 +64,19 @@ rotasIntegracoes.post('/integracoes/:provedor/configurar', autenticar, async (re
         return;
       }
       await claude.configurar(corpo.api_key);
+    } else if (provedor === 'conta_azul_ass' || provedor === 'conta_azul_netr') {
+      if (!corpo.client_id || !corpo.client_secret) {
+        res.status(400).json({ erro: 'Campos obrigatórios: client_id e client_secret.' });
+        return;
+      }
+      const conta = provedor === 'conta_azul_ass' ? 'ass' : 'netr';
+      await contaAzul.configurar(conta, {
+        client_id: corpo.client_id,
+        client_secret: corpo.client_secret,
+        authorize_url: corpo.authorize_url,
+        token_url: corpo.token_url,
+        api_base: corpo.api_base,
+      });
     } else {
       res.status(400).json({ erro: `Provedor não configurável via formulário: ${provedor}` });
       return;
@@ -75,18 +88,22 @@ rotasIntegracoes.post('/integracoes/:provedor/configurar', autenticar, async (re
 });
 
 // --- OAuth: inicia a autorização (redireciona ao provedor) ------------------
-rotasIntegracoes.get('/integracoes/:provedor/conectar', (req, res) => {
+rotasIntegracoes.get('/integracoes/:provedor/conectar', async (req, res) => {
   const { provedor } = req.params;
-  let url: string | null = null;
-  if (provedor === 'conta_azul_ass') url = contaAzul.urlAutorizacao('ass');
-  else if (provedor === 'conta_azul_netr') url = contaAzul.urlAutorizacao('netr');
-  else if (provedor === 'google_drive') url = googleDrive.urlAutorizacao();
+  try {
+    let url: string | null = null;
+    if (provedor === 'conta_azul_ass') url = await contaAzul.urlAutorizacao('ass');
+    else if (provedor === 'conta_azul_netr') url = await contaAzul.urlAutorizacao('netr');
+    else if (provedor === 'google_drive') url = googleDrive.urlAutorizacao();
 
-  if (!url) {
-    res.status(400).json({ erro: `Provedor sem fluxo OAuth: ${provedor}` });
-    return;
+    if (!url) {
+      res.status(400).json({ erro: `Provedor sem fluxo OAuth: ${provedor}` });
+      return;
+    }
+    res.redirect(url);
+  } catch (e) {
+    res.status(400).json({ erro: (e as Error).message });
   }
-  res.redirect(url);
 });
 
 // --- OAuth: callback (troca code por token e volta ao frontend) -------------

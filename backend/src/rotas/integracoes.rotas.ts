@@ -10,6 +10,9 @@ import { Router } from 'express';
 import { autenticar } from '../middleware/auth';
 import { env } from '../config/env';
 import { testes, statusGeral, contaAzul, googleDrive } from '../integracoes';
+import * as pipedrive from '../integracoes/pipedrive';
+import * as clockify from '../integracoes/clockify';
+import * as claude from '../integracoes/claude';
 import { executarSincronizacao } from '../servicos/sincronizacao';
 import type { Provedor } from '../tipos/integracao';
 
@@ -35,6 +38,40 @@ rotasIntegracoes.get('/integracoes/:provedor/testar', autenticar, async (req, re
 rotasIntegracoes.post('/integracoes/sincronizar', autenticar, async (_req, res) => {
   const resultado = await executarSincronizacao();
   res.json(resultado);
+});
+
+// --- Configura credenciais simples (API key / token) pelo frontend ----------
+rotasIntegracoes.post('/integracoes/:provedor/configurar', autenticar, async (req, res) => {
+  const { provedor } = req.params;
+  const corpo = req.body as Record<string, string>;
+
+  try {
+    if (provedor === 'pipedrive') {
+      if (!corpo.api_token || !corpo.dominio) {
+        res.status(400).json({ erro: 'Campos obrigatórios: api_token, dominio.' });
+        return;
+      }
+      await pipedrive.configurar(corpo.api_token, corpo.dominio);
+    } else if (provedor === 'clockify') {
+      if (!corpo.api_key) {
+        res.status(400).json({ erro: 'Campo obrigatório: api_key.' });
+        return;
+      }
+      await clockify.configurar(corpo.api_key);
+    } else if (provedor === 'claude') {
+      if (!corpo.api_key) {
+        res.status(400).json({ erro: 'Campo obrigatório: api_key.' });
+        return;
+      }
+      await claude.configurar(corpo.api_key);
+    } else {
+      res.status(400).json({ erro: `Provedor não configurável via formulário: ${provedor}` });
+      return;
+    }
+    res.json({ ok: true, mensagem: `Credencial de ${provedor} salva com sucesso.` });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
 });
 
 // --- OAuth: inicia a autorização (redireciona ao provedor) ------------------

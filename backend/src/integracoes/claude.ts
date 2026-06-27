@@ -1,18 +1,25 @@
 /**
- * Conector Claude (Anthropic).
+ * Conector Claude (Anthropic) — API key.
  *
- * Camada de IA do sistema: Haiku para análises rápidas/alertas, Sonnet para
- * relatórios executivos. Na Fase 1 expomos o cliente e um teste de conexão;
- * os prompts de cada análise entram junto com os respectivos módulos.
+ * Ordem de resolução da credencial:
+ * 1. Banco (`integracao_config`) — configurado pelo frontend
+ * 2. Variável de ambiente `ANTHROPIC_API_KEY` — fallback para dev local
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { env, temCredencial } from '../config/env';
+import { lerCredencial, salvarCredencial } from './persistencia';
 import type { ResultadoTeste } from '../tipos/integracao';
 
-/** Cliente Anthropic compartilhado (ou null se a chave não estiver configurada). */
-export const anthropic = temCredencial(env.anthropicApiKey)
-  ? new Anthropic({ apiKey: env.anthropicApiKey })
-  : null;
+async function resolverKey(): Promise<string | null> {
+  const cred = await lerCredencial('claude');
+  const key = (cred?.api_key as string) || env.anthropicApiKey;
+  return temCredencial(key) ? key : null;
+}
+
+/** Salva a API key no banco (chamado pelo endpoint /configurar). */
+export async function configurar(apiKey: string): Promise<void> {
+  await salvarCredencial('claude', 'api_key', { access_token: '', api_key: apiKey });
+}
 
 /** Faz uma chamada mínima ao modelo rápido para validar a API key. */
 export async function testarConexao(): Promise<ResultadoTeste> {
@@ -23,10 +30,12 @@ export async function testarConexao(): Promise<ResultadoTeste> {
     mensagem: 'API key da Anthropic ainda não configurada.',
   };
 
-  if (!anthropic) return base;
+  const key = await resolverKey();
+  if (!key) return base;
 
   try {
-    const resp = await anthropic.messages.create({
+    const client = new Anthropic({ apiKey: key });
+    const resp = await client.messages.create({
       model: env.claudeModeloRapido,
       max_tokens: 16,
       messages: [{ role: 'user', content: 'responda apenas: ok' }],
@@ -41,4 +50,10 @@ export async function testarConexao(): Promise<ResultadoTeste> {
   } catch (e) {
     return { ...base, status: 'erro', mensagem: (e as Error).message };
   }
+}
+
+/** Cria um cliente Anthropic com a key resolvida (banco ou env). */
+export async function criarCliente(): Promise<Anthropic | null> {
+  const key = await resolverKey();
+  return key ? new Anthropic({ apiKey: key }) : null;
 }

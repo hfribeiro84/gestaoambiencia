@@ -1,11 +1,27 @@
 /**
- * Conector Pipedrive (CRM e contratos).
+ * Conector Pipedrive (CRM e contratos) — API token.
  *
- * Autenticação por API token. Na Fase 1 implementamos apenas o teste de
- * conexão; a leitura de funis/negócios entra nos módulos Comercial e Contratos.
+ * Ordem de resolução da credencial:
+ * 1. Banco (`integracao_config`) — configurado pelo frontend
+ * 2. Variável de ambiente `PIPEDRIVE_API_TOKEN` — fallback para dev local
  */
 import { env, temCredencial } from '../config/env';
+import { lerCredencial, salvarCredencial } from './persistencia';
 import type { ResultadoTeste } from '../tipos/integracao';
+
+/** Lê o token do banco; se não houver, usa o env. */
+async function resolverToken(): Promise<{ token: string; dominio: string } | null> {
+  const cred = await lerCredencial('pipedrive');
+  const token = (cred?.api_token as string) || env.pipedriveApiToken;
+  const dominio = (cred?.dominio as string) || env.pipedriveDominio;
+  if (!temCredencial(token, dominio)) return null;
+  return { token, dominio };
+}
+
+/** Salva token e domínio no banco (chamado pelo endpoint /configurar). */
+export async function configurar(apiToken: string, dominio: string): Promise<void> {
+  await salvarCredencial('pipedrive', 'api_token', { access_token: '', api_token: apiToken, dominio });
+}
 
 /** Testa a credencial chamando o endpoint /users/me do Pipedrive. */
 export async function testarConexao(): Promise<ResultadoTeste> {
@@ -16,12 +32,11 @@ export async function testarConexao(): Promise<ResultadoTeste> {
     mensagem: 'Token do Pipedrive ainda não configurado.',
   };
 
-  if (!temCredencial(env.pipedriveApiToken, env.pipedriveDominio)) {
-    return base;
-  }
+  const creds = await resolverToken();
+  if (!creds) return base;
 
   try {
-    const url = `${env.pipedriveDominio}/api/v1/users/me?api_token=${env.pipedriveApiToken}`;
+    const url = `${creds.dominio}/api/v1/users/me?api_token=${creds.token}`;
     const resp = await fetch(url);
     if (!resp.ok) {
       return { ...base, status: 'erro', mensagem: `HTTP ${resp.status} ao consultar o Pipedrive.` };

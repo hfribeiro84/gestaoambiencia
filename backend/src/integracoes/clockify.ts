@@ -1,12 +1,24 @@
 /**
- * Conector Clockify (registro de horas).
+ * Conector Clockify (registro de horas) — API key.
  *
- * Autenticação por API key (cabeçalho X-Api-Key). Na Fase 1 só o teste de
- * conexão; horas e custos por projeto entram nos módulos Resultado por
- * Projeto e RH.
+ * Ordem de resolução da credencial:
+ * 1. Banco (`integracao_config`) — configurado pelo frontend
+ * 2. Variável de ambiente `CLOCKIFY_API_KEY` — fallback para dev local
  */
 import { env, temCredencial } from '../config/env';
+import { lerCredencial, salvarCredencial } from './persistencia';
 import type { ResultadoTeste } from '../tipos/integracao';
+
+async function resolverKey(): Promise<string | null> {
+  const cred = await lerCredencial('clockify');
+  const key = (cred?.api_key as string) || env.clockifyApiKey;
+  return temCredencial(key) ? key : null;
+}
+
+/** Salva a API key no banco (chamado pelo endpoint /configurar). */
+export async function configurar(apiKey: string): Promise<void> {
+  await salvarCredencial('clockify', 'api_key', { access_token: '', api_key: apiKey });
+}
 
 /** Testa a credencial chamando o endpoint /user do Clockify. */
 export async function testarConexao(): Promise<ResultadoTeste> {
@@ -17,13 +29,12 @@ export async function testarConexao(): Promise<ResultadoTeste> {
     mensagem: 'API key do Clockify ainda não configurada.',
   };
 
-  if (!temCredencial(env.clockifyApiKey)) {
-    return base;
-  }
+  const key = await resolverKey();
+  if (!key) return base;
 
   try {
     const resp = await fetch('https://api.clockify.me/api/v1/user', {
-      headers: { 'X-Api-Key': env.clockifyApiKey },
+      headers: { 'X-Api-Key': key },
     });
     if (!resp.ok) {
       return { ...base, status: 'erro', mensagem: `HTTP ${resp.status} ao consultar o Clockify.` };

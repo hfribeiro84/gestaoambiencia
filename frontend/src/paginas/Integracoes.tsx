@@ -1,8 +1,10 @@
 /**
  * Página de Integrações.
  *
- * Mostra o status de cada provedor (Conta Azul ASS/NETR, Pipedrive, Clockify,
- * Google Drive, Claude), permite testar a conexão e iniciar os fluxos OAuth.
+ * - Provedores OAuth (Conta Azul ASS/NETR, Google Drive): botão "Conectar"
+ *   que inicia o fluxo OAuth no backend.
+ * - Provedores de chave simples (Pipedrive, Clockify, Claude): formulário
+ *   inline para salvar a credencial no banco sem sair do sistema.
  */
 import { useEffect, useState } from 'react';
 import { api, urlBackend } from '../lib/api';
@@ -24,7 +26,6 @@ const NOMES: Record<string, string> = {
   claude: 'Claude (IA)',
 };
 
-// Provedores que usam OAuth (botão "Conectar" abre o fluxo no backend).
 const OAUTH = ['conta_azul_ass', 'conta_azul_netr', 'google_drive'];
 
 const COR: Record<string, string> = {
@@ -33,11 +34,29 @@ const COR: Record<string, string> = {
   erro: 'bg-red-100 text-red-800',
 };
 
+// Campos dos formulários de chave simples por provedor.
+const FORMULARIOS: Record<string, { label: string; campo: string; tipo?: string }[]> = {
+  pipedrive: [
+    { label: 'API Token', campo: 'api_token', tipo: 'password' },
+    { label: 'Domínio (ex: https://suaempresa.pipedrive.com)', campo: 'dominio' },
+  ],
+  clockify: [
+    { label: 'API Key', campo: 'api_key', tipo: 'password' },
+  ],
+  claude: [
+    { label: 'API Key (Anthropic)', campo: 'api_key', tipo: 'password' },
+  ],
+};
+
 export function Integracoes() {
   const [lista, setLista] = useState<StatusIntegracao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
   const [aviso, setAviso] = useState('');
+  // Estado dos formulários abertos e seus valores.
+  const [formAberto, setFormAberto] = useState<string | null>(null);
+  const [formValores, setFormValores] = useState<Record<string, string>>({});
+  const [formSalvando, setFormSalvando] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -53,7 +72,6 @@ export function Integracoes() {
 
   useEffect(() => {
     carregar();
-    // Mostra retorno do fluxo OAuth (?conectado= ou ?erro=).
     const params = new URLSearchParams(window.location.search);
     if (params.get('conectado')) setAviso(`Conectado: ${params.get('conectado')}`);
     if (params.get('erro')) setAviso(`Erro: ${params.get('erro')}`);
@@ -73,6 +91,30 @@ export function Integracoes() {
     }
   }
 
+  function abrirForm(provedor: string) {
+    setFormAberto(formAberto === provedor ? null : provedor);
+    setFormValores({});
+  }
+
+  async function salvarCredencial(provedor: string) {
+    setFormSalvando(true);
+    setAviso('');
+    try {
+      await api(`/api/integracoes/${provedor}/configurar`, {
+        method: 'POST',
+        body: JSON.stringify(formValores),
+      });
+      setFormAberto(null);
+      setFormValores({});
+      await carregar();
+      setAviso(`Credencial do ${NOMES[provedor]} salva. Testando conexão...`);
+    } catch (e) {
+      setAviso(`Erro: ${(e as Error).message}`);
+    } finally {
+      setFormSalvando(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -89,7 +131,9 @@ export function Integracoes() {
         </button>
       </div>
 
-      {aviso && <div className="mb-4 p-3 bg-blue-50 text-blue-800 rounded text-sm">{aviso}</div>}
+      {aviso && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-800 rounded text-sm">{aviso}</div>
+      )}
 
       {carregando ? (
         <p className="text-gray-500">Carregando...</p>
@@ -103,13 +147,62 @@ export function Integracoes() {
               </div>
               <p className="text-sm text-gray-600 mt-1">{it.mensagem}</p>
               {it.detalhe && <p className="text-xs text-gray-400 mt-1">{it.detalhe}</p>}
-              {OAUTH.includes(it.provedor) && (
-                <a
-                  href={`${urlBackend}/api/integracoes/${it.provedor}/conectar`}
-                  className="inline-block mt-3 text-sm text-ambiencia underline"
-                >
-                  {it.status === 'ok' ? 'Reconectar' : 'Conectar'}
-                </a>
+
+              <div className="mt-3 flex gap-3">
+                {/* Provedores OAuth: botão que redireciona ao fluxo */}
+                {OAUTH.includes(it.provedor) && (
+                  <a
+                    href={`${urlBackend}/api/integracoes/${it.provedor}/conectar`}
+                    className="text-sm text-ambiencia underline"
+                  >
+                    {it.status === 'ok' ? 'Reconectar' : 'Conectar'}
+                  </a>
+                )}
+
+                {/* Provedores de chave simples: formulário inline */}
+                {FORMULARIOS[it.provedor] && (
+                  <button
+                    onClick={() => abrirForm(it.provedor)}
+                    className="text-sm text-ambiencia underline"
+                  >
+                    {it.status === 'ok' ? 'Atualizar credencial' : 'Configurar'}
+                  </button>
+                )}
+              </div>
+
+              {/* Formulário inline (visível só quando aberto) */}
+              {formAberto === it.provedor && FORMULARIOS[it.provedor] && (
+                <div className="mt-3 border-t pt-3 space-y-2">
+                  {FORMULARIOS[it.provedor].map((campo) => (
+                    <div key={campo.campo}>
+                      <label className="block text-xs text-gray-500 mb-1">{campo.label}</label>
+                      <input
+                        type={campo.tipo ?? 'text'}
+                        value={formValores[campo.campo] ?? ''}
+                        onChange={(e) =>
+                          setFormValores((v) => ({ ...v, [campo.campo]: e.target.value }))
+                        }
+                        className="w-full border rounded px-2 py-1 text-sm"
+                        placeholder={campo.tipo === 'password' ? '••••••••' : ''}
+                      />
+                    </div>
+                  ))}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => salvarCredencial(it.provedor)}
+                      disabled={formSalvando}
+                      className="bg-ambiencia text-white text-sm px-3 py-1 rounded disabled:opacity-60"
+                    >
+                      {formSalvando ? 'Salvando...' : 'Salvar'}
+                    </button>
+                    <button
+                      onClick={() => setFormAberto(null)}
+                      className="text-sm text-gray-500 underline"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           ))}

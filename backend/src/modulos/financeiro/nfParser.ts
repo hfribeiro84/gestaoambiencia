@@ -1,12 +1,7 @@
 /**
  * Parseia os CSVs de "NF a emitir" da ASS e da NETR.
- *
- * ASS:  colunas fixas — B=EmissaoNF, C=Organização, D=Projeto, G=ValorRecorrente,
- *       H=ValorEstudos, N=RetencaoISS. Primeira linha vazia, segunda é cabeçalho.
- *
- * NETR: colunas fixas — B=EmissaoNF, C=Empresa, E=Unidade, G=CNPJ,
- *       H=ValorMensal, I=RetencaoISS, J=ValorCobrança. Primeira linha é
- *       metadado, segunda é cabeçalho com células multiline.
+ * Detecta as colunas pelo nome do cabeçalho para tolerar qualquer
+ * variação de layout (colunas extras, ordem diferente, etc.).
  */
 import { parse } from 'csv-parse/sync';
 import type { NfPlanilha } from './nfTypes';
@@ -17,39 +12,62 @@ function parseBRL(valor: string): number {
   return parseFloat(limpo) || 0;
 }
 
-function normEmissao(valor: string): string {
-  return (valor ?? '').trim().toUpperCase();
-}
-
 function parseLinhas(csv: string): string[][] {
   return parse(csv, {
     skip_empty_lines: false,
     relax_column_count: true,
     relax_quotes: true,
+    bom: true,
   }) as string[][];
+}
+
+/** Encontra o índice da coluna cujo cabeçalho contém algum dos termos. */
+function findCol(headers: string[], ...termos: string[]): number {
+  return headers.findIndex((h) =>
+    termos.some((t) => h.trim().toLowerCase().includes(t.toLowerCase())),
+  );
+}
+
+/** Encontra a linha de cabeçalho procurando por termos conhecidos. */
+function findHeaderRow(linhas: string[][], ...termos: string[]): { idx: number; row: string[] } {
+  for (let i = 0; i < Math.min(linhas.length, 8); i++) {
+    const row = linhas[i];
+    if (row.some((cell) => termos.some((t) => cell.toLowerCase().includes(t.toLowerCase())))) {
+      return { idx: i, row };
+    }
+  }
+  return { idx: 1, row: linhas[1] ?? [] };
 }
 
 export function parseCsvAss(csv: string): NfPlanilha[] {
   const linhas = parseLinhas(csv);
-  // Linha 0: vazia; Linha 1: cabeçalho → dados a partir da linha 2
-  const dados = linhas.slice(2);
+  const { idx: headerIdx, row: headers } = findHeaderRow(linhas, 'organiza', 'emiss');
+
+  const colEmissao  = findCol(headers, 'emiss');
+  const colCliente  = findCol(headers, 'organiza');
+  const colProjeto  = findCol(headers, 'projeto');
+  const colRec      = findCol(headers, 'recorrente');
+  const colOut      = findCol(headers, 'estudo', 'outro');
+  const colIss      = findCol(headers, 'reten');
+
+  const dados = linhas.slice(headerIdx + 1);
   const resultado: NfPlanilha[] = [];
 
   for (const row of dados) {
-    const cliente = (row[2] ?? '').trim();
+    const cliente = colCliente >= 0 ? (row[colCliente] ?? '').trim() : '';
     if (!cliente) continue;
 
-    const valorRec = parseBRL(row[6] ?? '');
-    const valorOut = parseBRL(row[7] ?? '');
+    const valorRec = parseBRL(colRec >= 0 ? (row[colRec] ?? '') : '');
+    const valorOut = parseBRL(colOut >= 0 ? (row[colOut] ?? '') : '');
     const valorTotal = valorRec + valorOut;
     if (valorTotal === 0) continue;
 
     resultado.push({
-      emissaoNF: normEmissao(row[1] ?? ''),
+      emissaoNF: colEmissao >= 0 ? (row[colEmissao] ?? '').trim().toUpperCase() : '',
       cliente,
-      descricao: (row[3] ?? '').trim(),
+      descricao: colProjeto >= 0 ? (row[colProjeto] ?? '').trim() : '',
       valorTotal,
-      retencaoISS: (row[13] ?? '').trim().toUpperCase() === 'SIM',
+      retencaoISS: (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM',
     });
   }
   return resultado;
@@ -57,24 +75,32 @@ export function parseCsvAss(csv: string): NfPlanilha[] {
 
 export function parseCsvNetr(csv: string): NfPlanilha[] {
   const linhas = parseLinhas(csv);
-  // Linha 0: metadado; Linha 1: cabeçalho (multiline) → dados a partir da linha 2
-  const dados = linhas.slice(2);
+  const { idx: headerIdx, row: headers } = findHeaderRow(linhas, 'empresa', 'unidade', 'cnpj');
+
+  const colEmissao  = findCol(headers, 'emiss');
+  const colEmpresa  = findCol(headers, 'empresa');
+  const colUnidade  = findCol(headers, 'unidade');
+  const colCnpj     = findCol(headers, 'cnpj');
+  const colValor    = findCol(headers, 'cobran');
+  const colIss      = findCol(headers, 'reten');
+
+  const dados = linhas.slice(headerIdx + 1);
   const resultado: NfPlanilha[] = [];
 
   for (const row of dados) {
-    const empresa = (row[2] ?? '').trim();
+    const empresa = colEmpresa >= 0 ? (row[colEmpresa] ?? '').trim() : '';
     if (!empresa) continue;
 
-    const valorTotal = parseBRL(row[9] ?? '');
+    const valorTotal = parseBRL(colValor >= 0 ? (row[colValor] ?? '') : '');
     if (valorTotal === 0) continue;
 
     resultado.push({
-      emissaoNF: normEmissao(row[1] ?? ''),
+      emissaoNF: colEmissao >= 0 ? (row[colEmissao] ?? '').trim().toUpperCase() : '',
       cliente: empresa,
-      descricao: (row[4] ?? '').trim(),
-      cnpj: (row[6] ?? '').replace(/\D/g, ''),
+      descricao: colUnidade >= 0 ? (row[colUnidade] ?? '').trim() : '',
+      cnpj: (colCnpj >= 0 ? (row[colCnpj] ?? '') : '').replace(/\D/g, ''),
       valorTotal,
-      retencaoISS: (row[8] ?? '').trim().toUpperCase() === 'SIM',
+      retencaoISS: (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM',
     });
   }
   return resultado;

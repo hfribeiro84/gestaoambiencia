@@ -53,13 +53,20 @@ rotasFinanceiro.post('/financeiro/debug/preview-csv', autenticar, async (req, re
     const { parseCsvAss, parseCsvNetr } = await import('../modulos/financeiro/nfParser');
     const { parse } = await import('csv-parse/sync');
 
-    const linhasBrutas = (parse(csv, { skip_empty_lines: false, relax_column_count: true, relax_quotes: true }) as string[][]).slice(0, 4);
+    const todasLinhas = (parse(csv, { skip_empty_lines: false, relax_column_count: true, relax_quotes: true, bom: true }) as string[][]);
+    // Mostra as 5 primeiras linhas com índices de coluna
+    const cabecalho = todasLinhas.slice(0, 5).map((row, i) => ({
+      linha: i,
+      colunas: row.map((v, j) => `[${j}]=${v.slice(0, 40)}`).join(' | '),
+    }));
+
     const planilha = empresa === 'ass' ? parseCsvAss(csv) : parseCsvNetr(csv);
 
     res.json({
+      totalLinhas: todasLinhas.length,
       totalItens: planilha.length,
+      cabecalho,
       primeiros3: planilha.slice(0, 3),
-      linhasBrutas,
     });
   } catch (e) {
     res.json({ erro: (e as Error).message });

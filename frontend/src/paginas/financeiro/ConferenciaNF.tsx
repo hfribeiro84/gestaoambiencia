@@ -296,19 +296,37 @@ export function ConferenciaNF() {
           )}
 
           {/* Cards de resumo */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            {[
-              { label: 'Na planilha', valor: resultado.totalPlanilha, cor: 'bg-gray-50 text-gray-700' },
-              { label: 'No Conta Azul', valor: resultado.totalContaAzul, cor: 'bg-blue-50 text-blue-700' },
-              { label: 'Conferidos', valor: resultado.conferidos, cor: 'bg-green-50 text-green-700' },
-              { label: 'Pendentes', valor: resultado.pendentes, cor: 'bg-red-50 text-red-700' },
-            ].map((c) => (
-              <div key={c.label} className={`rounded-lg p-4 ${c.cor}`}>
-                <div className="text-2xl font-bold">{c.valor}</div>
-                <div className="text-sm">{c.label}</div>
-              </div>
-            ))}
-          </div>
+          {(() => {
+            const totalValorPlanilha = resultado.itens.reduce((s, i) => s + (i.planilha?.valorTotal ?? 0), 0);
+            const totalValorCa = resultado.itens.reduce((s, i) => s + (i.contaAzul?.valor ?? 0), 0);
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  {[
+                    { label: 'Na planilha', valor: resultado.totalPlanilha, cor: 'bg-gray-50 text-gray-700' },
+                    { label: 'No Conta Azul', valor: resultado.totalContaAzul, cor: 'bg-blue-50 text-blue-700' },
+                    { label: 'Conferidos', valor: resultado.conferidos, cor: 'bg-green-50 text-green-700' },
+                    { label: 'Pendentes', valor: resultado.pendentes, cor: 'bg-red-50 text-red-700' },
+                  ].map((c) => (
+                    <div key={c.label} className={`rounded-lg p-4 ${c.cor}`}>
+                      <div className="text-2xl font-bold">{c.valor}</div>
+                      <div className="text-sm">{c.label}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <div className="rounded-lg p-4 bg-gray-50 text-gray-700">
+                    <div className="text-xl font-bold">{formatBRL(totalValorPlanilha)}</div>
+                    <div className="text-sm">Total planilha</div>
+                  </div>
+                  <div className="rounded-lg p-4 bg-blue-50 text-blue-700">
+                    <div className="text-xl font-bold">{formatBRL(totalValorCa)}</div>
+                    <div className="text-sm">Total NFs emitidas</div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Filtro */}
           <div className="flex gap-2 mb-4">

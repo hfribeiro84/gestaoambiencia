@@ -46,13 +46,12 @@ function campoMatchCa(campo: string, caNorm: string): boolean {
   return pjP !== undefined && pjC !== undefined && pjP === pjC;
 }
 
-function matchAss(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number): boolean {
+function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
   const caNorm = normNome(ca.cliente);
   if (!caNorm) return false;
-  const nomeMatch = campoMatchCa(normNome(planilha.cliente), caNorm)
+  // Matching só por nome — diferença de valor é mostrada na tabela
+  return campoMatchCa(normNome(planilha.cliente), caNorm)
     || campoMatchCa(normNome(planilha.descricao ?? ''), caNorm);
-  if (!nomeMatch) return false;
-  return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }
 
 export function conferirNfs(
@@ -66,7 +65,7 @@ export function conferirNfs(
 
   const escolherMatch = empresa === 'netr'
     ? (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS)
-    : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca, aliquotaISS);
+    : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
 
   for (const nfP of planilha) {
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));

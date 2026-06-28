@@ -22,39 +22,42 @@ function valorProximo(a: number, b: number): boolean {
 function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida): boolean {
   const cnpjP = normCnpj(planilha.cnpj ?? '');
   const cnpjC = normCnpj(ca.cnpj ?? '');
-  return cnpjP.length > 0 && cnpjP === cnpjC && valorProximo(ca.valor, planilha.valorTotal);
+  if (!(cnpjP.length > 0 && cnpjP === cnpjC)) return false;
+  // Quando há retenção de ISS, o CA já desconta o ISS do valor — não compara valor
+  if (planilha.retencaoISS) return true;
+  return valorProximo(ca.valor, planilha.valorTotal);
 }
 
 /**
- * Matching para ASS: o Conta Azul grava o projeto no campo nome_cliente
- * (ex.: "PJ279-1 - GAC - EPA Letícia..."), então comparamos o código PJ
- * do campo descricao (Projeto da planilha) contra o nome_cliente da CA.
- * Fallback: nome da organização.
+ * Matching para ASS: o Conta Azul grava o projeto em nome_cliente
+ * (ex.: "PJ279-1 - GAC - EPA Letícia..."). Compara pelo código PJ
+ * do campo descricao (Projeto da planilha). Quando há retenção de ISS,
+ * não exige que os valores batam (CA está líquido, planilha está bruto).
  */
 function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
   const caNorm = normNome(ca.cliente);
   if (!caNorm) return false;
 
-  // 1. Código PJ (mais específico): "pj279-1" deve estar em ambos
+  // 1. Código PJ
   const descNorm = normNome(planilha.descricao ?? '');
   const pjPlanilha = descNorm.match(/pj\d+[-\d]*/)?.[0];
   const pjCa = caNorm.match(/pj\d+[-\d]*/)?.[0];
-  if (pjPlanilha && pjCa && pjPlanilha === pjCa) {
-    return valorProximo(ca.valor, planilha.valorTotal);
-  }
+  let nomeMatch = pjPlanilha !== undefined && pjCa !== undefined && pjPlanilha === pjCa;
 
-  // 2. Substring bidirecional do texto do projeto
-  if (descNorm.length > 3 && (caNorm.includes(descNorm) || descNorm.includes(caNorm))) {
-    return valorProximo(ca.valor, planilha.valorTotal);
+  // 2. Substring do projeto
+  if (!nomeMatch && descNorm.length > 3) {
+    nomeMatch = caNorm.includes(descNorm) || descNorm.includes(caNorm);
   }
 
   // 3. Fallback: nome da organização
-  const clienteNorm = normNome(planilha.cliente);
-  if (clienteNorm.length > 2 && (caNorm.includes(clienteNorm) || clienteNorm.includes(caNorm))) {
-    return valorProximo(ca.valor, planilha.valorTotal);
+  if (!nomeMatch) {
+    const clienteNorm = normNome(planilha.cliente);
+    nomeMatch = clienteNorm.length > 2 && (caNorm.includes(clienteNorm) || clienteNorm.includes(caNorm));
   }
 
-  return false;
+  if (!nomeMatch) return false;
+  if (planilha.retencaoISS) return true; // ISS → não compara valor
+  return valorProximo(ca.valor, planilha.valorTotal);
 }
 
 export function conferirNfs(
@@ -71,7 +74,6 @@ export function conferirNfs(
 
   for (const nfP of planilha) {
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
-
     if (match) {
       matchados.add(match.id);
       itens.push({ status: 'conferido', planilha: nfP, contaAzul: match });

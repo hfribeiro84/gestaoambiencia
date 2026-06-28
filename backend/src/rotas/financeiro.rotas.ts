@@ -127,6 +127,35 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/financeiro/debug/matching/:empresa/:mes/:ano
+// Mostra o que está sendo comparado — planilha (descricao) vs CA (cliente)
+// ---------------------------------------------------------------------------
+rotasFinanceiro.get('/financeiro/debug/matching/:empresa/:mes/:ano', autenticar, async (req, res) => {
+  const { empresa, mes, ano } = req.params as { empresa: Empresa; mes: string; ano: string };
+  try {
+    const salva = await buscarPlanilhaSalva(empresa, Number(mes), Number(ano));
+    let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
+    try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (_) {}
+
+    res.json({
+      planilha: (salva?.itens ?? []).slice(0, 5).map((p) => ({
+        cliente: p.cliente,
+        descricao: p.descricao,
+        valorTotal: p.valorTotal,
+        retencaoISS: p.retencaoISS,
+      })),
+      contaAzul: nfsEmitidas.slice(0, 5).map((ca) => ({
+        cliente: ca.cliente,
+        valor: ca.valor,
+        numero: ca.numero,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Debug
 // ---------------------------------------------------------------------------
 

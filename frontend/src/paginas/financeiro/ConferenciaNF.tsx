@@ -166,6 +166,19 @@ export function ConferenciaNF() {
     }
   }
 
+  async function verComparacao() {
+    setCarregando(true);
+    setErro('');
+    try {
+      const r = await api<unknown>(`/api/financeiro/debug/matching/${empresa}/${mes}/${ano}`);
+      setErro(JSON.stringify(r, null, 2));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
   async function verPreviewCsv() {
     if (!csvContent) { setErro('Selecione o arquivo CSV primeiro.'); return; }
     setCarregando(true);
@@ -265,6 +278,13 @@ export function ConferenciaNF() {
               className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
             >
               {carregando ? 'Consultando...' : 'Atualizar Conta Azul'}
+            </button>
+            <button
+              onClick={verComparacao}
+              disabled={carregando}
+              className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm hover:border-gray-400 whitespace-nowrap disabled:opacity-50"
+            >
+              Ver comparação
             </button>
             <button
               onClick={() => setModoSubstituir(true)}

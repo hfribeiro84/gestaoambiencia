@@ -12,12 +12,20 @@ function parseBRL(valor: string): number {
   return parseFloat(limpo) || 0;
 }
 
+function detectarDelimitador(csv: string): string {
+  const amostra = csv.slice(0, 2000);
+  const pontoVirgulas = (amostra.match(/;/g) ?? []).length;
+  const virgulas = (amostra.match(/,/g) ?? []).length;
+  return pontoVirgulas > virgulas ? ';' : ',';
+}
+
 function parseLinhas(csv: string): string[][] {
   return parse(csv, {
     skip_empty_lines: false,
     relax_column_count: true,
     relax_quotes: true,
     bom: true,
+    delimiter: detectarDelimitador(csv),
   }) as string[][];
 }
 

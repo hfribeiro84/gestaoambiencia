@@ -42,6 +42,7 @@ interface ResultadoConferencia {
   naoEsperadas: number;
   itens: ItemConferencia[];
   erroApi?: string;
+  erroSalvar?: string;
 }
 
 interface PlanilhaSalvaInfo {
@@ -155,8 +156,9 @@ export function ConferenciaNF() {
       setResultado(r);
       setFiltro('todos');
       setModoSubstituir(false);
-      // Atualiza info sem limpar o resultado
-      setPlanilhaSalva({ totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() });
+      if (!r.erroSalvar) {
+        setPlanilhaSalva({ totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() });
+      }
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -329,6 +331,12 @@ export function ConferenciaNF() {
           {resultado.erroApi && (
             <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
               <strong>Aviso:</strong> Não foi possível consultar o Conta Azul ({resultado.erroApi}).
+            </div>
+          )}
+          {resultado.erroSalvar && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+              <strong>Erro ao salvar planilha no banco:</strong> {resultado.erroSalvar}
+              <div className="mt-1 text-xs">Verifique se as migrations 0002 e 0003 foram rodadas no Supabase.</div>
             </div>
           )}
 

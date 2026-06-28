@@ -89,6 +89,7 @@ export function calcularResultado(
   contaAzul: NfEmitida[],
   aliquotaISS = 0,
   erroApi?: string,
+  erroSalvar?: string,
 ): ResultadoConferencia {
   const itens = erroApi
     ? planilha.map((p) => ({ status: 'pendente' as const, planilha: p }))
@@ -104,5 +105,6 @@ export function calcularResultado(
     naoEsperadas: itens.filter((i) => i.status === 'nao_esperada').length,
     itens,
     erroApi,
+    erroSalvar,
   };
 }

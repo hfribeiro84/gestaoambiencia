@@ -80,14 +80,19 @@ rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => 
     res.status(400).json({ erro: `Erro ao ler CSV: ${(e as Error).message}` }); return;
   }
 
-  try { await salvarPlanilha(empresa, Number(mes), Number(ano), planilha, Number(aliquotaISS)); } catch (_) { /* não bloqueia */ }
+  let erroSalvar: string | undefined;
+  try {
+    await salvarPlanilha(empresa, Number(mes), Number(ano), planilha, Number(aliquotaISS));
+  } catch (e) {
+    erroSalvar = (e as Error).message;
+  }
 
   let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
   let erroApi: string | undefined;
   try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
   try {
-    res.json(calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi));
+    res.json(calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi, erroSalvar));
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

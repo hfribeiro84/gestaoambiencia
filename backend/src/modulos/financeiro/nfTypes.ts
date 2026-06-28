@@ -40,4 +40,5 @@ export interface ResultadoConferencia {
   naoEsperadas: number;
   itens: ItemConferencia[];
   erroApi?: string;
+  erroSalvar?: string;
 }

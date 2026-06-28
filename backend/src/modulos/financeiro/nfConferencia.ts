@@ -35,24 +35,15 @@ function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number):
 
 function matchAss(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number): boolean {
   const caNorm = normNome(ca.cliente);
-  if (!caNorm) return false;
-
-  // 1. Código PJ
   const descNorm = normNome(planilha.descricao ?? '');
+  if (!caNorm || !descNorm) return false;
+
+  // 1. Código PJ (ex: "pj279-1") — mais específico
   const pjPlanilha = descNorm.match(/pj\d+[-\d]*/)?.[0];
   const pjCa = caNorm.match(/pj\d+[-\d]*/)?.[0];
-  let nomeMatch = pjPlanilha !== undefined && pjCa !== undefined && pjPlanilha === pjCa;
-
-  // 2. Substring do projeto
-  if (!nomeMatch && descNorm.length > 3) {
-    nomeMatch = caNorm.includes(descNorm) || descNorm.includes(caNorm);
-  }
-
-  // 3. Fallback: nome da organização
-  if (!nomeMatch) {
-    const clienteNorm = normNome(planilha.cliente);
-    nomeMatch = clienteNorm.length > 2 && (caNorm.includes(clienteNorm) || clienteNorm.includes(caNorm));
-  }
+  const nomeMatch = (pjPlanilha !== undefined && pjCa !== undefined && pjPlanilha === pjCa)
+    || caNorm.includes(descNorm)
+    || descNorm.includes(caNorm);
 
   if (!nomeMatch) return false;
   return valorProximo(ca.valor, vliq(planilha, aliquotaISS));

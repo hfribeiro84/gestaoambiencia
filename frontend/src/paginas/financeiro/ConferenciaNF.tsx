@@ -154,8 +154,9 @@ export function ConferenciaNF() {
       });
       setResultado(r);
       setFiltro('todos');
-      await carregarInfo();
       setModoSubstituir(false);
+      // Atualiza info sem limpar o resultado
+      setPlanilhaSalva({ totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() });
     } catch (e) {
       setErro((e as Error).message);
     } finally {

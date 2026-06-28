@@ -5,7 +5,7 @@ import { buscarNfsEmitidas } from '../modulos/financeiro/nfContaAzul';
 import { calcularResultado } from '../modulos/financeiro/nfConferencia';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { supabaseAdmin } from '../config/supabase';
-import type { Empresa, NfPlanilha } from '../modulos/financeiro/nfTypes';
+import type { Empresa, NfPlanilha, ResultadoConferencia } from '../modulos/financeiro/nfTypes';
 
 export const rotasFinanceiro = Router();
 
@@ -16,11 +16,17 @@ export const rotasFinanceiro = Router();
 async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
   const { data, error } = await supabaseAdmin
     .from('nf_planilha_salva')
-    .select('itens, aliquota_iss, atualizado_em')
+    .select('itens, aliquota_iss, atualizado_em, ultimo_resultado, resultado_em')
     .eq('empresa', empresa).eq('mes', mes).eq('ano', ano)
     .single();
   if (error || !data) return null;
-  return data as { itens: NfPlanilha[]; aliquota_iss: number | null; atualizado_em: string };
+  return data as {
+    itens: NfPlanilha[];
+    aliquota_iss: number | null;
+    atualizado_em: string;
+    ultimo_resultado: ResultadoConferencia | null;
+    resultado_em: string | null;
+  };
 }
 
 async function salvarPlanilha(
@@ -34,6 +40,13 @@ async function salvarPlanilha(
       { onConflict: 'empresa,mes,ano' },
     );
   if (error) throw new Error(`Erro ao salvar planilha: ${error.message}`);
+}
+
+async function salvarResultado(empresa: Empresa, mes: number, ano: number, resultado: ResultadoConferencia) {
+  await supabaseAdmin
+    .from('nf_planilha_salva')
+    .update({ ultimo_resultado: resultado, resultado_em: new Date().toISOString() })
+    .eq('empresa', empresa).eq('mes', mes).eq('ano', ano);
 }
 
 async function buscarCA(empresa: Empresa, mes: number, ano: number) {
@@ -52,6 +65,8 @@ rotasFinanceiro.get('/financeiro/nf/planilha/:empresa/:mes/:ano', autenticar, as
       totalItens: salva.itens.length,
       aliquotaISS: salva.aliquota_iss ?? 0,
       atualizado_em: salva.atualizado_em,
+      ultimoResultado: salva.ultimo_resultado ?? null,
+      resultado_em: salva.resultado_em ?? null,
     });
   } catch (e) {
     res.json(null); // tabela pode não existir ainda — não bloqueia a tela
@@ -92,7 +107,9 @@ rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => 
   try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
   try {
-    res.json(calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi, erroSalvar));
+    const resultado = calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi, erroSalvar);
+    salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
+    res.json(resultado);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }
@@ -120,7 +137,9 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
     let erroApi: string | undefined;
     try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
-    res.json(calcularResultado(empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas, aliquotaFinal, erroApi));
+    const resultado = calcularResultado(empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas, aliquotaFinal, erroApi);
+    salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
+    res.json(resultado);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

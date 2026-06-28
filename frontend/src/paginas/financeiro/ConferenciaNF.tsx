@@ -49,6 +49,8 @@ interface PlanilhaSalvaInfo {
   totalItens: number;
   aliquotaISS: number;
   atualizado_em: string;
+  ultimoResultado?: ResultadoConferencia;
+  resultado_em?: string;
 }
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -64,7 +66,7 @@ const COR_STATUS: Record<StatusConferencia, string> = {
 const LABEL_STATUS: Record<StatusConferencia, string> = {
   conferido: '✅ Conferido',
   pendente: '❌ Pendente',
-  nao_esperada: '⚠️ Não esperada',
+  nao_esperada: '⚠️ Não prevista',
 };
 
 function formatBRL(valor: number): string {
@@ -104,12 +106,12 @@ export function ConferenciaNF() {
   // Resultado e UX
   const [carregando, setCarregando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
+  const [resultadoEm, setResultadoEm] = useState<string | null>(null);
   const [erro, setErro] = useState('');
   const [filtro, setFiltro] = useState<StatusConferencia | 'todos'>('todos');
 
   const carregarInfo = useCallback(async () => {
     setCarregandoInfo(true);
-    setResultado(null);
     setErro('');
     setModoSubstituir(false);
     setNomeArquivo('');
@@ -118,8 +120,13 @@ export function ConferenciaNF() {
       const info = await api<PlanilhaSalvaInfo | null>(`/api/financeiro/nf/planilha/${empresa}/${mes}/${ano}`);
       setPlanilhaSalva(info);
       if (info?.aliquotaISS) setAliquotaISS(info.aliquotaISS);
+      setResultado(info?.ultimoResultado ?? null);
+      setResultadoEm(info?.resultado_em ?? null);
+      setFiltro('todos');
     } catch {
       setPlanilhaSalva(null);
+      setResultado(null);
+      setResultadoEm(null);
     } finally {
       setCarregandoInfo(false);
     }
@@ -135,6 +142,7 @@ export function ConferenciaNF() {
       const params = aliquotaISS > 0 ? `?aliquotaISS=${aliquotaISS}` : '';
       const r = await api<ResultadoConferencia>(`/api/financeiro/nf/conferir/${empresa}/${mes}/${ano}${params}`);
       setResultado(r);
+      setResultadoEm(new Date().toISOString());
       setFiltro('todos');
     } catch (e) {
       setErro((e as Error).message);
@@ -154,10 +162,14 @@ export function ConferenciaNF() {
         body: JSON.stringify({ empresa, mes, ano, csv: csvContent, aliquotaISS }),
       });
       setResultado(r);
+      setResultadoEm(new Date().toISOString());
       setFiltro('todos');
       setModoSubstituir(false);
       if (!r.erroSalvar) {
-        setPlanilhaSalva({ totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() });
+        setPlanilhaSalva((prev) => prev
+          ? { ...prev, totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS }
+          : { totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() }
+        );
       }
     } catch (e) {
       setErro((e as Error).message);
@@ -360,18 +372,25 @@ export function ConferenciaNF() {
             </div>
           )}
 
+          {resultadoEm && (
+            <div className="mb-3 text-xs text-gray-400">
+              Resultado de {formatDataHora(resultadoEm)}
+            </div>
+          )}
+
           {/* Cards */}
           {(() => {
             const totalValorPlanilha = resultado.itens.reduce((s, i) => s + (i.planilha?.valorTotal ?? 0), 0);
             const totalValorCa = resultado.itens.reduce((s, i) => s + (i.contaAzul?.valor ?? 0), 0);
             return (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
                   {[
                     { label: 'Na planilha', valor: resultado.totalPlanilha, cor: 'bg-gray-50 text-gray-700' },
                     { label: 'No Conta Azul', valor: resultado.totalContaAzul, cor: 'bg-blue-50 text-blue-700' },
                     { label: 'Conferidos', valor: resultado.conferidos, cor: 'bg-green-50 text-green-700' },
                     { label: 'Pendentes', valor: resultado.pendentes, cor: 'bg-red-50 text-red-700' },
+                    { label: 'Não previstas', valor: resultado.naoEsperadas, cor: 'bg-yellow-50 text-yellow-700' },
                   ].map((c) => (
                     <div key={c.label} className={`rounded-lg p-4 ${c.cor}`}>
                       <div className="text-2xl font-bold">{c.valor}</div>

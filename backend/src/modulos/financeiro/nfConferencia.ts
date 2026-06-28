@@ -33,25 +33,24 @@ function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number):
   return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }
 
+/**
+ * Verifica se o campo da planilha bate com o nome_cliente do CA.
+ * O CA pode ter "Projeto - Razão Social", então CA pode CONTER o projeto.
+ * Ordem: substring → código PJ (fallback quando nomes diferem mas PJ igual).
+ */
 function campoMatchCa(campo: string, caNorm: string): boolean {
-  if (!campo) return false;
-  const pjCampo = campo.match(/pj\d+/)?.[0];
-  const pjCa = caNorm.match(/pj\d+/)?.[0];
-  if (pjCampo && pjCa) return pjCampo === pjCa;
-  return campo.length > 3 && (caNorm.includes(campo) || campo.includes(caNorm));
+  if (!campo || campo.length < 4) return false;
+  if (caNorm.includes(campo) || campo.includes(caNorm)) return true;
+  const pjP = campo.match(/pj\d+/)?.[0];
+  const pjC = caNorm.match(/pj\d+/)?.[0];
+  return pjP !== undefined && pjC !== undefined && pjP === pjC;
 }
 
-/**
- * Matching ASS: tenta cliente (col Organização) e descricao (col Projeto)
- * contra nome_cliente do CA — usa o que tiver código PJ ou substring.
- */
 function matchAss(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number): boolean {
   const caNorm = normNome(ca.cliente);
   if (!caNorm) return false;
-
   const nomeMatch = campoMatchCa(normNome(planilha.cliente), caNorm)
     || campoMatchCa(normNome(planilha.descricao ?? ''), caNorm);
-
   if (!nomeMatch) return false;
   return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }

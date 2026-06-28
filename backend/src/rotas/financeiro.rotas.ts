@@ -10,105 +10,108 @@ import type { Empresa, NfPlanilha } from '../modulos/financeiro/nfTypes';
 export const rotasFinanceiro = Router();
 
 // ---------------------------------------------------------------------------
-// Helpers de persistência da planilha
+// Helpers de persistência
 // ---------------------------------------------------------------------------
 
 async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
   const { data, error } = await supabaseAdmin
     .from('nf_planilha_salva')
-    .select('itens, atualizado_em')
-    .eq('empresa', empresa)
-    .eq('mes', mes)
-    .eq('ano', ano)
+    .select('itens, aliquota_iss, atualizado_em')
+    .eq('empresa', empresa).eq('mes', mes).eq('ano', ano)
     .single();
   if (error || !data) return null;
-  return data as { itens: NfPlanilha[]; atualizado_em: string };
+  return data as { itens: NfPlanilha[]; aliquota_iss: number | null; atualizado_em: string };
 }
 
-async function salvarPlanilha(empresa: Empresa, mes: number, ano: number, itens: NfPlanilha[]) {
+async function salvarPlanilha(
+  empresa: Empresa, mes: number, ano: number,
+  itens: NfPlanilha[], aliquotaISS: number,
+) {
   const { error } = await supabaseAdmin
     .from('nf_planilha_salva')
-    .upsert({ empresa, mes, ano, itens, atualizado_em: new Date().toISOString() }, { onConflict: 'empresa,mes,ano' });
+    .upsert(
+      { empresa, mes, ano, itens, aliquota_iss: aliquotaISS || null, atualizado_em: new Date().toISOString() },
+      { onConflict: 'empresa,mes,ano' },
+    );
   if (error) throw new Error(`Erro ao salvar planilha: ${error.message}`);
+}
+
+async function buscarCA(empresa: Empresa, mes: number, ano: number) {
+  return buscarNfsEmitidas(empresa, mes, ano);
 }
 
 // ---------------------------------------------------------------------------
 // GET /api/financeiro/nf/planilha/:empresa/:mes/:ano
-// Verifica se existe planilha salva e retorna seus metadados.
 // ---------------------------------------------------------------------------
 rotasFinanceiro.get('/financeiro/nf/planilha/:empresa/:mes/:ano', autenticar, async (req, res) => {
   const { empresa, mes, ano } = req.params as { empresa: Empresa; mes: string; ano: string };
   const salva = await buscarPlanilhaSalva(empresa, Number(mes), Number(ano));
   if (!salva) { res.json(null); return; }
-  res.json({ totalItens: salva.itens.length, atualizado_em: salva.atualizado_em });
+  res.json({
+    totalItens: salva.itens.length,
+    aliquotaISS: salva.aliquota_iss ?? 0,
+    atualizado_em: salva.atualizado_em,
+  });
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/financeiro/nf/conferir
-// Upload de CSV → salva planilha no banco → busca CA → retorna resultado.
+// POST /api/financeiro/nf/conferir  — upload CSV → salva → busca CA
 // ---------------------------------------------------------------------------
 rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => {
-  const { empresa, mes, ano, csv } = req.body as {
-    empresa: Empresa; mes: number; ano: number; csv: string;
+  const { empresa, mes, ano, csv, aliquotaISS = 0 } = req.body as {
+    empresa: Empresa; mes: number; ano: number; csv: string; aliquotaISS?: number;
   };
 
   if (!empresa || !mes || !ano || !csv) {
-    res.status(400).json({ erro: 'Campos obrigatórios: empresa, mes, ano, csv.' });
-    return;
+    res.status(400).json({ erro: 'Campos obrigatórios: empresa, mes, ano, csv.' }); return;
   }
   if (empresa !== 'ass' && empresa !== 'netr') {
-    res.status(400).json({ erro: 'empresa deve ser "ass" ou "netr".' });
-    return;
+    res.status(400).json({ erro: 'empresa deve ser "ass" ou "netr".' }); return;
   }
 
   let planilha: NfPlanilha[];
   try {
     planilha = empresa === 'ass' ? parseCsvAss(csv) : parseCsvNetr(csv);
   } catch (e) {
-    res.status(400).json({ erro: `Erro ao ler CSV: ${(e as Error).message}` });
-    return;
+    res.status(400).json({ erro: `Erro ao ler CSV: ${(e as Error).message}` }); return;
   }
 
-  // Salva planilha no banco (ignora erro para não bloquear a conferência)
-  try { await salvarPlanilha(empresa, Number(mes), Number(ano), planilha); } catch (_) { /* ok */ }
+  try { await salvarPlanilha(empresa, Number(mes), Number(ano), planilha, Number(aliquotaISS)); } catch (_) { /* não bloqueia */ }
 
-  let nfsEmitidas: Awaited<ReturnType<typeof buscarNfsEmitidas>> = [];
+  let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
   let erroApi: string | undefined;
-  try {
-    nfsEmitidas = await buscarNfsEmitidas(empresa, Number(mes), Number(ano));
-  } catch (e) {
-    erroApi = (e as Error).message;
-  }
+  try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
-  res.json(calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, erroApi));
+  res.json(calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi));
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/financeiro/nf/conferir/:empresa/:mes/:ano
-// Usa a planilha salva no banco + busca CA atualizado.
+// GET /api/financeiro/nf/conferir/:empresa/:mes/:ano  — usa planilha salva
 // ---------------------------------------------------------------------------
 rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, async (req, res) => {
   const { empresa, mes, ano } = req.params as { empresa: Empresa; mes: string; ano: string };
+  const aliquotaISS = Number(req.query.aliquotaISS ?? 0);
 
   const salva = await buscarPlanilhaSalva(empresa, Number(mes), Number(ano));
   if (!salva) {
-    res.status(404).json({ erro: 'Nenhuma planilha salva para este período. Faça o upload primeiro.' });
-    return;
+    res.status(404).json({ erro: 'Nenhuma planilha salva para este período. Faça o upload primeiro.' }); return;
   }
 
-  let nfsEmitidas: Awaited<ReturnType<typeof buscarNfsEmitidas>> = [];
+  // Persiste a alíquota atualizada se o usuário mudou
+  const aliquotaFinal = aliquotaISS || salva.aliquota_iss || 0;
+  if (aliquotaISS && aliquotaISS !== salva.aliquota_iss) {
+    try { await salvarPlanilha(empresa, Number(mes), Number(ano), salva.itens, aliquotaISS); } catch (_) { /* ok */ }
+  }
+
+  let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
   let erroApi: string | undefined;
-  try {
-    nfsEmitidas = await buscarNfsEmitidas(empresa, Number(mes), Number(ano));
-  } catch (e) {
-    erroApi = (e as Error).message;
-  }
+  try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
-  res.json(calcularResultado(empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas, erroApi));
+  res.json(calcularResultado(empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas, aliquotaFinal, erroApi));
 });
 
 // ---------------------------------------------------------------------------
-// Debug — manter enquanto a conferência ainda está sendo ajustada
+// Debug
 // ---------------------------------------------------------------------------
 
 const CANDIDATOS = ['/v1/pessoa', '/v1/notas-fiscais-servico', '/v1/notas-fiscais', '/v1/conta-receber', '/v1/lancamento', '/v1/venda'];

@@ -34,6 +34,7 @@ interface ResultadoConferencia {
   empresa: Empresa;
   mes: number;
   ano: number;
+  aliquotaISS: number;
   totalPlanilha: number;
   totalContaAzul: number;
   conferidos: number;
@@ -45,6 +46,7 @@ interface ResultadoConferencia {
 
 interface PlanilhaSalvaInfo {
   totalItens: number;
+  aliquotaISS: number;
   atualizado_em: string;
 }
 
@@ -75,10 +77,18 @@ function formatDataHora(iso: string): string {
   });
 }
 
+/** Valor líquido após desconto de ISS, se aplicável. */
+function valorLiquido(planilha: NfPlanilha, aliquotaISS: number): number {
+  return planilha.retencaoISS && aliquotaISS > 0
+    ? planilha.valorTotal * (1 - aliquotaISS / 100)
+    : planilha.valorTotal;
+}
+
 export function ConferenciaNF() {
   const [empresa, setEmpresa] = useState<Empresa>('ass');
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [ano, setAno] = useState(anoAtual);
+  const [aliquotaISS, setAliquotaISS] = useState(0);
 
   // Planilha salva no banco
   const [planilhaSalva, setPlanilhaSalva] = useState<PlanilhaSalvaInfo | null>(null);
@@ -96,7 +106,6 @@ export function ConferenciaNF() {
   const [erro, setErro] = useState('');
   const [filtro, setFiltro] = useState<StatusConferencia | 'todos'>('todos');
 
-  // Carrega info da planilha salva sempre que empresa/mês/ano mudam
   const carregarInfo = useCallback(async () => {
     setCarregandoInfo(true);
     setResultado(null);
@@ -107,6 +116,7 @@ export function ConferenciaNF() {
     try {
       const info = await api<PlanilhaSalvaInfo | null>(`/api/financeiro/nf/planilha/${empresa}/${mes}/${ano}`);
       setPlanilhaSalva(info);
+      if (info?.aliquotaISS) setAliquotaISS(info.aliquotaISS);
     } catch {
       setPlanilhaSalva(null);
     } finally {
@@ -116,13 +126,13 @@ export function ConferenciaNF() {
 
   useEffect(() => { carregarInfo(); }, [carregarInfo]);
 
-  // Conferir usando planilha salva (só atualiza Conta Azul)
   async function atualizarContaAzul() {
     setCarregando(true);
     setErro('');
     setResultado(null);
     try {
-      const r = await api<ResultadoConferencia>(`/api/financeiro/nf/conferir/${empresa}/${mes}/${ano}`);
+      const params = aliquotaISS > 0 ? `?aliquotaISS=${aliquotaISS}` : '';
+      const r = await api<ResultadoConferencia>(`/api/financeiro/nf/conferir/${empresa}/${mes}/${ano}${params}`);
       setResultado(r);
       setFiltro('todos');
     } catch (e) {
@@ -132,7 +142,6 @@ export function ConferenciaNF() {
     }
   }
 
-  // Conferir com CSV novo (salva planilha + busca CA)
   async function conferirComCsv() {
     if (!csvContent) { setErro('Selecione o arquivo CSV.'); return; }
     setCarregando(true);
@@ -141,11 +150,10 @@ export function ConferenciaNF() {
     try {
       const r = await api<ResultadoConferencia>('/api/financeiro/nf/conferir', {
         method: 'POST',
-        body: JSON.stringify({ empresa, mes, ano, csv: csvContent }),
+        body: JSON.stringify({ empresa, mes, ano, csv: csvContent, aliquotaISS }),
       });
       setResultado(r);
       setFiltro('todos');
-      // Atualiza info da planilha salva
       await carregarInfo();
       setModoSubstituir(false);
     } catch (e) {
@@ -176,6 +184,8 @@ export function ConferenciaNF() {
     ? filtro === 'todos' ? resultado.itens : resultado.itens.filter((i) => i.status === filtro)
     : [];
 
+  const aliquotaEfetiva = resultado?.aliquotaISS ?? aliquotaISS;
+
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-1">Conferência de NF</h1>
@@ -185,8 +195,8 @@ export function ConferenciaNF() {
 
       {/* Controles */}
       <div className="bg-white rounded-lg shadow p-5 mb-6">
-        {/* Linha 1: seletores */}
-        <div className="grid grid-cols-3 gap-4 mb-4">
+        {/* Linha 1: seletores + ISS */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Empresa</label>
             <div className="flex gap-2">
@@ -217,13 +227,25 @@ export function ConferenciaNF() {
               {ANOS.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Alíquota ISS (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.5}
+              value={aliquotaISS || ''}
+              onChange={(e) => setAliquotaISS(Number(e.target.value))}
+              placeholder="Ex: 5"
+              className="w-full border rounded px-2 py-2 text-sm"
+            />
+          </div>
         </div>
 
         {/* Status da planilha + ações */}
         {carregandoInfo ? (
           <div className="text-sm text-gray-400">Verificando planilha salva...</div>
         ) : planilhaSalva && !modoSubstituir ? (
-          /* Planilha salva — modo normal */
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex-1 min-w-0">
               <div className="text-sm text-gray-700">
@@ -249,54 +271,51 @@ export function ConferenciaNF() {
             </button>
           </div>
         ) : (
-          /* Upload de CSV */
-          <div>
-            <div className="flex items-end gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <label className="block text-xs text-gray-500 mb-1">Planilha CSV</label>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept=".csv"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) { setNomeArquivo(file.name); setCsvContent(await file.text()); }
-                    else { setNomeArquivo(''); setCsvContent(''); }
-                  }}
-                />
-                <button
-                  onClick={() => inputRef.current?.click()}
-                  className="w-full border rounded px-3 py-2 text-sm text-left truncate text-gray-600 hover:border-ambiencia"
-                >
-                  {nomeArquivo || 'Selecionar arquivo...'}
-                </button>
-              </div>
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <label className="block text-xs text-gray-500 mb-1">Planilha CSV</label>
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) { setNomeArquivo(file.name); setCsvContent(await file.text()); }
+                  else { setNomeArquivo(''); setCsvContent(''); }
+                }}
+              />
               <button
-                onClick={conferirComCsv}
-                disabled={carregando || !csvContent}
-                className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
+                onClick={() => inputRef.current?.click()}
+                className="w-full border rounded px-3 py-2 text-sm text-left truncate text-gray-600 hover:border-ambiencia"
               >
-                {carregando ? 'Consultando...' : 'Conferir'}
+                {nomeArquivo || 'Selecionar arquivo...'}
               </button>
-              {csvContent && (
-                <button
-                  onClick={verPreviewCsv}
-                  disabled={carregando}
-                  className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
-                >
-                  Preview CSV
-                </button>
-              )}
-              {modoSubstituir && (
-                <button
-                  onClick={() => { setModoSubstituir(false); setNomeArquivo(''); setCsvContent(''); }}
-                  className="text-sm text-gray-400 hover:text-gray-600 px-2 py-2"
-                >
-                  Cancelar
-                </button>
-              )}
             </div>
+            <button
+              onClick={conferirComCsv}
+              disabled={carregando || !csvContent}
+              className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
+            >
+              {carregando ? 'Consultando...' : 'Conferir'}
+            </button>
+            {csvContent && (
+              <button
+                onClick={verPreviewCsv}
+                disabled={carregando}
+                className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
+              >
+                Preview CSV
+              </button>
+            )}
+            {modoSubstituir && (
+              <button
+                onClick={() => { setModoSubstituir(false); setNomeArquivo(''); setCsvContent(''); }}
+                className="text-sm text-gray-400 hover:text-gray-600 px-2 py-2"
+              >
+                Cancelar
+              </button>
+            )}
           </div>
         )}
 
@@ -312,7 +331,7 @@ export function ConferenciaNF() {
             </div>
           )}
 
-          {/* Cards de contagem */}
+          {/* Cards */}
           {(() => {
             const totalValorPlanilha = resultado.itens.reduce((s, i) => s + (i.planilha?.valorTotal ?? 0), 0);
             const totalValorCa = resultado.itens.reduce((s, i) => s + (i.contaAzul?.valor ?? 0), 0);
@@ -375,11 +394,13 @@ export function ConferenciaNF() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {itensFiltrados.map((item, idx) => {
-                  const diferenca = item.status === 'conferido'
-                    ? (item.contaAzul?.valor ?? 0) - (item.planilha?.valorTotal ?? 0)
+                  const vliq = item.planilha
+                    ? valorLiquido(item.planilha, aliquotaEfetiva)
                     : null;
-                  const temIss = item.planilha?.retencaoISS === true;
-                  const diferencaEsperada = temIss && diferenca !== null && diferenca < 0;
+                  const diferenca = item.status === 'conferido' && vliq !== null
+                    ? (item.contaAzul?.valor ?? 0) - vliq
+                    : null;
+                  const temIss = item.planilha?.retencaoISS && aliquotaEfetiva > 0;
 
                   return (
                     <tr key={idx} className="hover:bg-gray-50">
@@ -401,9 +422,11 @@ export function ConferenciaNF() {
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {item.planilha ? (
                           <div>
-                            {formatBRL(item.planilha.valorTotal)}
-                            {temIss && (
-                              <span className="ml-1 text-xs text-orange-500 font-medium" title="Retenção de ISS — valor bruto">ISS</span>
+                            <div>{formatBRL(item.planilha.valorTotal)}</div>
+                            {temIss && vliq !== null && (
+                              <div className="text-xs text-orange-500">
+                                líq. {formatBRL(vliq)}
+                              </div>
                             )}
                           </div>
                         ) : '—'}
@@ -417,16 +440,9 @@ export function ConferenciaNF() {
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {diferenca !== null ? (
                           <span className={
-                            Math.abs(diferenca) < 1
-                              ? 'text-gray-400'
-                              : diferencaEsperada
-                                ? 'text-orange-500'
-                                : 'text-red-600 font-medium'
+                            Math.abs(diferenca) < 1 ? 'text-gray-400' : 'text-red-600 font-medium'
                           }>
                             {formatBRL(diferenca)}
-                            {diferencaEsperada && (
-                              <span className="ml-1 text-xs" title="Diferença esperada por retenção de ISS">*</span>
-                            )}
                           </span>
                         ) : '—'}
                       </td>
@@ -438,9 +454,9 @@ export function ConferenciaNF() {
             {itensFiltrados.length === 0 && (
               <p className="text-center text-gray-400 py-8">Nenhum item nesta categoria.</p>
             )}
-            {resultado.itens.some((i) => i.planilha?.retencaoISS) && (
-              <div className="px-4 py-3 border-t text-xs text-orange-500">
-                * Diferença esperada por retenção de ISS — o valor da planilha é bruto; o Conta Azul registra o valor líquido.
+            {aliquotaEfetiva > 0 && resultado.itens.some((i) => i.planilha?.retencaoISS) && (
+              <div className="px-4 py-3 border-t text-xs text-gray-400">
+                ISS {aliquotaEfetiva}% — coluna Diferença calculada sobre o valor líquido (planilha bruto − ISS).
               </div>
             )}
           </div>

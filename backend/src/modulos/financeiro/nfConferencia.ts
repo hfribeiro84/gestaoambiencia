@@ -14,27 +14,26 @@ function normCnpj(v: string): string {
   return (v ?? '').replace(/\D/g, '');
 }
 
+/** Valor líquido: desconta ISS quando há retenção e alíquota informada. */
+function vliq(planilha: NfPlanilha, aliquotaISS: number): number {
+  return planilha.retencaoISS && aliquotaISS > 0
+    ? planilha.valorTotal * (1 - aliquotaISS / 100)
+    : planilha.valorTotal;
+}
+
 function valorProximo(a: number, b: number): boolean {
   if (a === 0 && b === 0) return true;
   return Math.abs(a - b) < 1.0; // ±R$1,00
 }
 
-function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida): boolean {
+function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number): boolean {
   const cnpjP = normCnpj(planilha.cnpj ?? '');
   const cnpjC = normCnpj(ca.cnpj ?? '');
   if (!(cnpjP.length > 0 && cnpjP === cnpjC)) return false;
-  // Quando há retenção de ISS, o CA já desconta o ISS do valor — não compara valor
-  if (planilha.retencaoISS) return true;
-  return valorProximo(ca.valor, planilha.valorTotal);
+  return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }
 
-/**
- * Matching para ASS: o Conta Azul grava o projeto em nome_cliente
- * (ex.: "PJ279-1 - GAC - EPA Letícia..."). Compara pelo código PJ
- * do campo descricao (Projeto da planilha). Quando há retenção de ISS,
- * não exige que os valores batam (CA está líquido, planilha está bruto).
- */
-function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
+function matchAss(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number): boolean {
   const caNorm = normNome(ca.cliente);
   if (!caNorm) return false;
 
@@ -56,21 +55,21 @@ function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
   }
 
   if (!nomeMatch) return false;
-  if (planilha.retencaoISS) return true; // ISS → não compara valor
-  return valorProximo(ca.valor, planilha.valorTotal);
+  return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }
 
 export function conferirNfs(
   empresa: Empresa,
   planilha: NfPlanilha[],
   contaAzul: NfEmitida[],
+  aliquotaISS = 0,
 ): ItemConferencia[] {
   const matchados = new Set<string>();
   const itens: ItemConferencia[] = [];
 
   const escolherMatch = empresa === 'netr'
-    ? (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca)
-    : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
+    ? (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS)
+    : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca, aliquotaISS);
 
   for (const nfP of planilha) {
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
@@ -97,16 +96,16 @@ export function calcularResultado(
   ano: number,
   planilha: NfPlanilha[],
   contaAzul: NfEmitida[],
+  aliquotaISS = 0,
   erroApi?: string,
 ): ResultadoConferencia {
   const itens = erroApi
     ? planilha.map((p) => ({ status: 'pendente' as const, planilha: p }))
-    : conferirNfs(empresa, planilha, contaAzul);
+    : conferirNfs(empresa, planilha, contaAzul, aliquotaISS);
 
   return {
-    empresa,
-    mes,
-    ano,
+    empresa, mes, ano,
+    aliquotaISS,
     totalPlanilha: planilha.length,
     totalContaAzul: contaAzul.length,
     conferidos: itens.filter((i) => i.status === 'conferido').length,

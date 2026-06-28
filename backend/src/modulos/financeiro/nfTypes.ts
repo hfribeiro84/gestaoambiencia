@@ -32,6 +32,7 @@ export interface ResultadoConferencia {
   empresa: Empresa;
   mes: number;
   ano: number;
+  aliquotaISS: number;
   totalPlanilha: number;
   totalContaAzul: number;
   conferidos: number;

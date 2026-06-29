@@ -169,7 +169,16 @@ export async function obterTokenValido(conta: ContaAzul): Promise<string> {
   return tk.access_token;
 }
 
-/** Executa uma chamada autenticada à API do Conta Azul. */
+// Cache da URL base que funciona por sessão (evita tentativa dupla)
+const apiBaseOk = new Map<ContaAzul, string>();
+const CA_BASES_FALLBACK = [
+  'https://api.contaazul.com',
+  'https://api-v2.contaazul.com',
+];
+
+/** Executa uma chamada autenticada à API do Conta Azul.
+ *  Se a URL configurada retornar 404, tenta bases alternativas automaticamente
+ *  e cacheia qual funciona para as próximas chamadas da mesma sessão. */
 export async function chamadaApi(
   conta: ContaAzul,
   endpoint: string,
@@ -178,10 +187,39 @@ export async function chamadaApi(
   const token = await obterTokenValido(conta);
   const cfg = await resolverAppConfig(conta);
   if (!cfg) throw new Error(`Conta Azul ${conta.toUpperCase()} sem configuração de API.`);
+
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return fetch(`${cfg.api_base}${endpoint}${qs}`, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  });
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  // Se já descobrimos qual base funciona, usa direto
+  const baseConhecida = apiBaseOk.get(conta);
+  if (baseConhecida) {
+    return fetch(`${baseConhecida}${endpoint}${qs}`, { headers });
+  }
+
+  // Tenta a URL configurada primeiro
+  const resp = await fetch(`${cfg.api_base}${endpoint}${qs}`, { headers });
+
+  if (resp.status !== 404) {
+    // Funciona — cacheia
+    apiBaseOk.set(conta, cfg.api_base);
+    return resp;
+  }
+
+  // 404: tenta as bases alternativas em ordem
+  for (const base of CA_BASES_FALLBACK) {
+    if (base === cfg.api_base) continue;
+    const alt = await fetch(`${base}${endpoint}${qs}`, { headers });
+    if (alt.status !== 404) {
+      console.log(`[CA ${conta}] URL base corrigida para: ${base}`);
+      apiBaseOk.set(conta, base);
+      return alt;
+    }
+  }
+
+  // Nenhuma funcionou — devolve o 404 original
+  apiBaseOk.set(conta, cfg.api_base);
+  return resp;
 }
 
 /** Testa a conexão: app configurado + token válido respondendo à API. */

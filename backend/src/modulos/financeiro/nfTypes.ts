@@ -26,6 +26,17 @@ export interface ItemConferencia {
   status: StatusConferencia;
   planilha?: NfPlanilha;
   contaAzul?: NfEmitida;
+  associacaoManual?: boolean;
+}
+
+export interface AssociacaoManual {
+  chaveItem: string;  // "${cliente}|${descricao}|${valorTotal}"
+  caId: string;       // id da NF no Conta Azul
+}
+
+/** Gera a chave estável de um item da planilha para associações manuais. */
+export function chaveItemPlanilha(item: NfPlanilha): string {
+  return `${item.cliente}|${item.descricao}|${item.valorTotal}`;
 }
 
 export interface ResultadoConferencia {

@@ -5,7 +5,7 @@ import { buscarNfsEmitidas } from '../modulos/financeiro/nfContaAzul';
 import { calcularResultado } from '../modulos/financeiro/nfConferencia';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { supabaseAdmin } from '../config/supabase';
-import type { Empresa, NfPlanilha, ResultadoConferencia } from '../modulos/financeiro/nfTypes';
+import type { Empresa, NfPlanilha, ResultadoConferencia, AssociacaoManual } from '../modulos/financeiro/nfTypes';
 
 export const rotasFinanceiro = Router();
 
@@ -16,7 +16,7 @@ export const rotasFinanceiro = Router();
 async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
   const { data, error } = await supabaseAdmin
     .from('nf_planilha_salva')
-    .select('itens, aliquota_iss, atualizado_em, ultimo_resultado, resultado_em')
+    .select('itens, aliquota_iss, atualizado_em, ultimo_resultado, resultado_em, associacoes_manuais')
     .eq('empresa', empresa).eq('mes', mes).eq('ano', ano)
     .single();
   if (error || !data) return null;
@@ -26,6 +26,7 @@ async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
     atualizado_em: string;
     ultimo_resultado: ResultadoConferencia | null;
     resultado_em: string | null;
+    associacoes_manuais: AssociacaoManual[];
   };
 }
 
@@ -49,6 +50,13 @@ async function salvarResultado(empresa: Empresa, mes: number, ano: number, resul
     .eq('empresa', empresa).eq('mes', mes).eq('ano', ano);
 }
 
+async function salvarAssociacoes(empresa: Empresa, mes: number, ano: number, associacoes: AssociacaoManual[]) {
+  await supabaseAdmin
+    .from('nf_planilha_salva')
+    .update({ associacoes_manuais: associacoes })
+    .eq('empresa', empresa).eq('mes', mes).eq('ano', ano);
+}
+
 async function buscarCA(empresa: Empresa, mes: number, ano: number) {
   return buscarNfsEmitidas(empresa, mes, ano);
 }
@@ -69,7 +77,7 @@ rotasFinanceiro.get('/financeiro/nf/planilha/:empresa/:mes/:ano', autenticar, as
       resultado_em: salva.resultado_em ?? null,
     });
   } catch (e) {
-    res.json(null); // tabela pode não existir ainda — não bloqueia a tela
+    res.json(null);
   }
 });
 
@@ -102,12 +110,22 @@ rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => 
     erroSalvar = (e as Error).message;
   }
 
+  // Preserva associações manuais existentes ao substituir a planilha
+  let assocExistentes: AssociacaoManual[] = [];
+  try {
+    const salva = await buscarPlanilhaSalva(empresa, Number(mes), Number(ano));
+    assocExistentes = salva?.associacoes_manuais ?? [];
+  } catch (_) {}
+
   let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
   let erroApi: string | undefined;
   try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
   try {
-    const resultado = calcularResultado(empresa, Number(mes), Number(ano), planilha, nfsEmitidas, Number(aliquotaISS), erroApi, erroSalvar);
+    const resultado = calcularResultado(
+      empresa, Number(mes), Number(ano), planilha, nfsEmitidas,
+      Number(aliquotaISS), erroApi, erroSalvar, assocExistentes,
+    );
     salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
     res.json(resultado);
   } catch (e) {
@@ -137,7 +155,60 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
     let erroApi: string | undefined;
     try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
-    const resultado = calcularResultado(empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas, aliquotaFinal, erroApi);
+    const resultado = calcularResultado(
+      empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas,
+      aliquotaFinal, erroApi, undefined, salva.associacoes_manuais ?? [],
+    );
+    salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
+    res.json(resultado);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/financeiro/nf/associar  — cria / remove associação manual
+// Body: { empresa, mes, ano, chaveItem, caId }
+//   caId = null → remove associação do chaveItem
+//   chaveItem e caId preenchidos → cria/substitui associação
+// Retorna: ResultadoConferencia atualizado
+// ---------------------------------------------------------------------------
+rotasFinanceiro.post('/financeiro/nf/associar', autenticar, async (req, res) => {
+  const { empresa, mes, ano, chaveItem, caId } = req.body as {
+    empresa: Empresa; mes: number; ano: number; chaveItem: string; caId: string | null;
+  };
+
+  if (!empresa || !mes || !ano || !chaveItem) {
+    res.status(400).json({ erro: 'Campos obrigatórios: empresa, mes, ano, chaveItem.' }); return;
+  }
+
+  try {
+    const salva = await buscarPlanilhaSalva(empresa, Number(mes), Number(ano));
+    if (!salva) { res.status(404).json({ erro: 'Planilha não encontrada.' }); return; }
+
+    let assocs: AssociacaoManual[] = salva.associacoes_manuais ?? [];
+
+    if (caId === null) {
+      // Remove associação do item da planilha
+      assocs = assocs.filter((a) => a.chaveItem !== chaveItem);
+    } else {
+      // Remove quaisquer associações existentes envolvendo este item ou esta CA NF
+      // (um item só pode ter um par; uma CA NF só pode ser par de um item)
+      assocs = assocs.filter((a) => a.chaveItem !== chaveItem && a.caId !== caId);
+      assocs.push({ chaveItem, caId });
+    }
+
+    await salvarAssociacoes(empresa, Number(mes), Number(ano), assocs);
+
+    let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
+    let erroApi: string | undefined;
+    try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
+
+    const aliquotaFinal = salva.aliquota_iss ?? 0;
+    const resultado = calcularResultado(
+      empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas,
+      aliquotaFinal, erroApi, undefined, assocs,
+    );
     salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
     res.json(resultado);
   } catch (e) {
@@ -147,7 +218,6 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
 
 // ---------------------------------------------------------------------------
 // GET /api/financeiro/debug/matching/:empresa/:mes/:ano
-// Mostra o que está sendo comparado — planilha (descricao) vs CA (cliente)
 // ---------------------------------------------------------------------------
 rotasFinanceiro.get('/financeiro/debug/matching/:empresa/:mes/:ano', autenticar, async (req, res) => {
   const { empresa, mes, ano } = req.params as { empresa: Empresa; mes: string; ano: string };
@@ -175,7 +245,7 @@ rotasFinanceiro.get('/financeiro/debug/matching/:empresa/:mes/:ano', autenticar,
 });
 
 // ---------------------------------------------------------------------------
-// Debug DRE — explorar endpoints de receitas/despesas
+// Debug DRE
 // ---------------------------------------------------------------------------
 
 rotasFinanceiro.get('/financeiro/debug/dre/:empresa/:mes/:ano', autenticar, async (req, res) => {
@@ -204,10 +274,6 @@ rotasFinanceiro.get('/financeiro/debug/dre/:empresa/:mes/:ano', autenticar, asyn
 
   res.json({ de, ate, receitas, despesas });
 });
-
-// ---------------------------------------------------------------------------
-// Debug (antigo)
-// ---------------------------------------------------------------------------
 
 const CANDIDATOS = ['/v1/pessoa', '/v1/notas-fiscais-servico', '/v1/notas-fiscais', '/v1/conta-receber', '/v1/lancamento', '/v1/venda'];
 

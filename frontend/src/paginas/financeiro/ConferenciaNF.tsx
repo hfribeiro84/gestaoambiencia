@@ -28,6 +28,7 @@ interface ItemConferencia {
   status: StatusConferencia;
   planilha?: NfPlanilha;
   contaAzul?: NfEmitida;
+  associacaoManual?: boolean;
 }
 
 interface ResultadoConferencia {
@@ -83,12 +84,235 @@ function formatDataHora(iso: string): string {
   });
 }
 
-/** Valor líquido após desconto de ISS, se aplicável. */
 function valorLiquido(planilha: NfPlanilha, aliquotaISS: number): number {
   return planilha.retencaoISS && aliquotaISS > 0
     ? planilha.valorTotal * (1 - aliquotaISS / 100)
     : planilha.valorTotal;
 }
+
+/** Chave estável de um item da planilha — deve bater com o backend. */
+function chaveItem(p: NfPlanilha): string {
+  return `${p.cliente}|${p.descricao}|${p.valorTotal}`;
+}
+
+// ---------------------------------------------------------------------------
+// Modal de associação manual
+// ---------------------------------------------------------------------------
+
+interface ModoAssociacao {
+  item: ItemConferencia;  // item de onde o usuário clicou
+  chaveAtual: string | null; // chaveItem da planilha envolvida (pode ser do item clicado ou do par atual)
+}
+
+interface ModalAssociacaoProps {
+  modo: ModoAssociacao;
+  resultado: ResultadoConferencia;
+  empresa: Empresa;
+  mes: number;
+  ano: number;
+  onSalvo: (novoResultado: ResultadoConferencia) => void;
+  onFechar: () => void;
+}
+
+function ModalAssociacao({ modo, resultado, empresa, mes, ano, onSalvo, onFechar }: ModalAssociacaoProps) {
+  const [busca, setBusca] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  const { item, chaveAtual } = modo;
+
+  // O item clicado vem da planilha (Pendente) ou do CA (Não Prevista)?
+  const itemDaPlanilha = item.planilha !== undefined && (item.status === 'pendente' || item.status === 'conferido' || item.status === 'conferido_diferenca');
+
+  // Candidatos: se item da planilha → mostra CA NFs; se item do CA → mostra planilha
+  const candidatosCA = resultado.itens
+    .filter((i) => i.contaAzul)
+    .map((i) => i.contaAzul!)
+    .filter((ca, idx, arr) => arr.findIndex((c) => c.id === ca.id) === idx); // dedup
+
+  const candidatosPlanilha = resultado.itens
+    .filter((i) => i.planilha)
+    .map((i) => i.planilha!)
+    .filter((p, idx, arr) => arr.findIndex((c) => chaveItem(c) === chaveItem(p)) === idx); // dedup
+
+  const termoBusca = busca.toLowerCase();
+
+  const filtrarCA = (ca: NfEmitida) => {
+    if (!termoBusca) return true;
+    return (
+      ca.cliente.toLowerCase().includes(termoBusca) ||
+      (ca.numero ?? '').includes(termoBusca) ||
+      String(ca.valor).includes(termoBusca) ||
+      (ca.descricao ?? '').toLowerCase().includes(termoBusca)
+    );
+  };
+
+  const filtrarPlanilha = (p: NfPlanilha) => {
+    if (!termoBusca) return true;
+    return (
+      p.cliente.toLowerCase().includes(termoBusca) ||
+      (p.descricao ?? '').toLowerCase().includes(termoBusca) ||
+      String(p.valorTotal).includes(termoBusca)
+    );
+  };
+
+  const casFiltradas = candidatosCA.filter(filtrarCA);
+  const planilhaFiltrada = candidatosPlanilha.filter(filtrarPlanilha);
+
+  // CA atualmente emparelhada com o item (se houver)
+  const caAtual = item.contaAzul?.id;
+  // Planilha atualmente emparelhada com o item (se for CA)
+  const planilhaAtual = item.planilha ? chaveItem(item.planilha) : null;
+
+  async function associar(caId: string | null, chaveP: string) {
+    setSalvando(true);
+    try {
+      const r = await api<ResultadoConferencia>('/api/financeiro/nf/associar', {
+        method: 'POST',
+        body: JSON.stringify({ empresa, mes, ano, chaveItem: chaveP, caId }),
+      });
+      onSalvo(r);
+    } catch (e) {
+      alert(`Erro ao salvar: ${(e as Error).message}`);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  // Título do modal
+  const tituloItem = itemDaPlanilha
+    ? `${item.planilha!.cliente}${item.planilha!.descricao ? ` / ${item.planilha!.descricao}` : ''}`
+    : `NF ${item.contaAzul?.numero ?? '?'} — ${item.contaAzul?.cliente ?? ''}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+        {/* Cabeçalho */}
+        <div className="px-5 py-4 border-b">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs text-gray-400 mb-0.5">
+                {itemDaPlanilha ? 'Item da planilha — associar com NF do Conta Azul' : 'NF do Conta Azul — associar com item da planilha'}
+              </div>
+              <div className="font-semibold text-gray-800 leading-tight">{tituloItem}</div>
+              {itemDaPlanilha && item.planilha && (
+                <div className="text-sm text-gray-500 mt-0.5">{formatBRL(item.planilha.valorTotal)}</div>
+              )}
+              {!itemDaPlanilha && item.contaAzul && (
+                <div className="text-sm text-gray-500 mt-0.5">{formatBRL(item.contaAzul.valor)}</div>
+              )}
+            </div>
+            <button onClick={onFechar} className="text-gray-400 hover:text-gray-600 text-xl leading-none mt-0.5">×</button>
+          </div>
+          {/* Botão remover associação (só para itens manualmente ou automaticamente emparelhados) */}
+          {(item.status === 'conferido' || item.status === 'conferido_diferenca') && chaveAtual && (
+            <button
+              disabled={salvando}
+              onClick={() => associar(null, chaveAtual)}
+              className="mt-3 w-full text-sm border border-red-200 text-red-600 rounded px-3 py-1.5 hover:bg-red-50 disabled:opacity-50"
+            >
+              {salvando ? 'Removendo...' : '🔗 Remover associação — deixar como Pendente / Não prevista'}
+            </button>
+          )}
+        </div>
+
+        {/* Busca */}
+        <div className="px-5 py-3 border-b">
+          <input
+            autoFocus
+            type="text"
+            placeholder="Filtrar candidatos..."
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:border-ambiencia"
+          />
+        </div>
+
+        {/* Lista de candidatos */}
+        <div className="flex-1 overflow-y-auto">
+          {itemDaPlanilha ? (
+            // Mostrar CA NFs como candidatos
+            casFiltradas.length === 0 ? (
+              <p className="text-center text-gray-400 py-8 text-sm">Nenhuma NF encontrada.</p>
+            ) : (
+              <ul className="divide-y divide-gray-50">
+                {casFiltradas.map((ca) => {
+                  const eSelecionada = ca.id === caAtual;
+                  const statusAtual = resultado.itens.find((i) => i.contaAzul?.id === ca.id)?.status;
+                  return (
+                    <li key={ca.id}>
+                      <button
+                        disabled={salvando || eSelecionada}
+                        onClick={() => associar(ca.id, chaveItem(item.planilha!))}
+                        className={`w-full text-left px-5 py-3 hover:bg-gray-50 disabled:cursor-default transition-colors ${eSelecionada ? 'bg-green-50' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{ca.cliente}</div>
+                            {ca.descricao && <div className="text-xs text-gray-400 truncate">{ca.descricao}</div>}
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              NF {ca.numero ?? '?'} · {ca.dataEmissao ? new Date(ca.dataEmissao).toLocaleDateString('pt-BR') : ''}
+                              {statusAtual && statusAtual !== 'nao_esperada' && (
+                                <span className="ml-2 text-orange-500">· já emparelhada</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-sm font-medium text-gray-700 whitespace-nowrap">{formatBRL(ca.valor)}</div>
+                          {eSelecionada && <span className="text-green-600 text-xs font-medium">atual</span>}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          ) : (
+            // Mostrar planilha como candidatos
+            planilhaFiltrada.length === 0 ? (
+              <p className="text-center text-gray-400 py-8 text-sm">Nenhum item da planilha encontrado.</p>
+            ) : (
+              <ul className="divide-y divide-gray-50">
+                {planilhaFiltrada.map((p, idx) => {
+                  const chave = chaveItem(p);
+                  const eSelecionada = chave === planilhaAtual;
+                  const statusAtual = resultado.itens.find((i) => i.planilha && chaveItem(i.planilha) === chave)?.status;
+                  return (
+                    <li key={idx}>
+                      <button
+                        disabled={salvando || eSelecionada}
+                        onClick={() => associar(item.contaAzul!.id, chave)}
+                        className={`w-full text-left px-5 py-3 hover:bg-gray-50 disabled:cursor-default transition-colors ${eSelecionada ? 'bg-green-50' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{p.cliente}</div>
+                            {p.descricao && <div className="text-xs text-gray-400 truncate">{p.descricao}</div>}
+                            {statusAtual && statusAtual !== 'pendente' && (
+                              <div className="text-xs text-orange-500 mt-0.5">já emparelhada</div>
+                            )}
+                          </div>
+                          <div className="text-sm font-medium text-gray-700 whitespace-nowrap">{formatBRL(p.valorTotal)}</div>
+                          {eSelecionada && <span className="text-green-600 text-xs font-medium">atual</span>}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t text-xs text-gray-400">
+          Clique em um candidato para criar a associação. Associações manuais têm prioridade sobre o matching automático.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Componente principal
+// ---------------------------------------------------------------------------
 
 export function ConferenciaNF() {
   const [empresa, setEmpresa] = useState<Empresa>('ass');
@@ -96,22 +320,22 @@ export function ConferenciaNF() {
   const [ano, setAno] = useState(anoAtual);
   const [aliquotaISS, setAliquotaISS] = useState(0);
 
-  // Planilha salva no banco
   const [planilhaSalva, setPlanilhaSalva] = useState<PlanilhaSalvaInfo | null>(null);
   const [carregandoInfo, setCarregandoInfo] = useState(false);
   const [modoSubstituir, setModoSubstituir] = useState(false);
 
-  // Upload de novo CSV
   const [nomeArquivo, setNomeArquivo] = useState('');
   const [csvContent, setCsvContent] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Resultado e UX
   const [carregando, setCarregando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
   const [resultadoEm, setResultadoEm] = useState<string | null>(null);
   const [erro, setErro] = useState('');
   const [filtro, setFiltro] = useState<StatusConferencia | 'todos'>('todos');
+
+  // Modal de associação
+  const [modoAssociacao, setModoAssociacao] = useState<ModoAssociacao | null>(null);
 
   const carregarInfo = useCallback(async () => {
     setCarregandoInfo(true);
@@ -170,7 +394,6 @@ export function ConferenciaNF() {
       setModoSubstituir(false);
       setNomeArquivo('');
       setCsvContent('');
-      // Recarrega do servidor para obter a data de atualização real do banco
       if (!r.erroSalvar) carregarInfo();
     } catch (e) {
       setErro((e as Error).message);
@@ -196,6 +419,17 @@ export function ConferenciaNF() {
     }
   }
 
+  function abrirAssociacao(item: ItemConferencia) {
+    const chave = item.planilha ? chaveItem(item.planilha) : null;
+    setModoAssociacao({ item, chaveAtual: chave });
+  }
+
+  function aoSalvarAssociacao(novoResultado: ResultadoConferencia) {
+    setResultado(novoResultado);
+    setResultadoEm(new Date().toISOString());
+    setModoAssociacao(null);
+  }
+
   const itensFiltrados = resultado
     ? filtro === 'todos'
       ? resultado.itens
@@ -213,7 +447,6 @@ export function ConferenciaNF() {
 
       {/* Controles */}
       <div className="bg-white rounded-lg shadow p-5 mb-6">
-        {/* Linha 1: seletores + ISS */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Empresa</label>
@@ -260,7 +493,6 @@ export function ConferenciaNF() {
           </div>
         </div>
 
-        {/* Status da planilha + ações */}
         {carregandoInfo ? (
           <div className="text-sm text-gray-400">Verificando planilha salva...</div>
         ) : planilhaSalva && !modoSubstituir ? (
@@ -351,7 +583,7 @@ export function ConferenciaNF() {
           {resultado.erroSalvar && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
               <strong>Erro ao salvar planilha no banco:</strong> {resultado.erroSalvar}
-              <div className="mt-1 text-xs">Verifique se as migrations 0002 e 0003 foram rodadas no Supabase.</div>
+              <div className="mt-1 text-xs">Verifique se as migrations foram rodadas no Supabase.</div>
             </div>
           )}
 
@@ -422,6 +654,7 @@ export function ConferenciaNF() {
                   <th className="px-4 py-3 text-center">NF nº</th>
                   <th className="px-4 py-3 text-right">Valor NF</th>
                   <th className="px-4 py-3 text-right">Diferença</th>
+                  <th className="px-4 py-3 text-center w-24"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -441,6 +674,9 @@ export function ConferenciaNF() {
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${COR_STATUS[item.status]}`}>
                           {LABEL_STATUS[item.status]}
                         </span>
+                        {item.associacaoManual && (
+                          <span className="ml-1 text-xs text-blue-400" title="Associação manual">🔗</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <div className="font-medium truncate">
@@ -479,6 +715,24 @@ export function ConferenciaNF() {
                           </span>
                         ) : '—'}
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        {(item.status === 'pendente' || item.status === 'nao_esperada') && (
+                          <button
+                            onClick={() => abrirAssociacao(item)}
+                            className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 whitespace-nowrap"
+                          >
+                            Associar
+                          </button>
+                        )}
+                        {(item.status === 'conferido' || item.status === 'conferido_diferenca') && (
+                          <button
+                            onClick={() => abrirAssociacao(item)}
+                            className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 whitespace-nowrap"
+                          >
+                            Corrigir
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -494,6 +748,19 @@ export function ConferenciaNF() {
             )}
           </div>
         </>
+      )}
+
+      {/* Modal de associação */}
+      {modoAssociacao && resultado && (
+        <ModalAssociacao
+          modo={modoAssociacao}
+          resultado={resultado}
+          empresa={empresa}
+          mes={mes}
+          ano={ano}
+          onSalvo={aoSalvarAssociacao}
+          onFechar={() => setModoAssociacao(null)}
+        />
       )}
     </div>
   );

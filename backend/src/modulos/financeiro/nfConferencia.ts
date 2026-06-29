@@ -1,4 +1,7 @@
-import type { Empresa, NfPlanilha, NfEmitida, ItemConferencia, ResultadoConferencia } from './nfTypes';
+import type {
+  Empresa, NfPlanilha, NfEmitida, ItemConferencia, ResultadoConferencia, AssociacaoManual,
+} from './nfTypes';
+import { chaveItemPlanilha } from './nfTypes';
 
 function normNome(nome: string): string {
   return (nome ?? '')
@@ -59,26 +62,53 @@ export function conferirNfs(
   planilha: NfPlanilha[],
   contaAzul: NfEmitida[],
   aliquotaISS = 0,
+  associacoesManuais: AssociacaoManual[] = [],
 ): ItemConferencia[] {
-  const matchados = new Set<string>();
+  const matchados = new Set<string>();         // ca.id já usado
+  const planilhaMatchada = new Set<string>();  // chaveItem já usada
   const itens: ItemConferencia[] = [];
 
   const escolherMatch = empresa === 'netr'
     ? (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS)
     : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
 
+  // 1. Associações manuais — têm prioridade absoluta sobre o matching automático.
+  //    Se a mesma CA NF aparecer em múltiplas associações, prevalece a primeira.
+  for (const assoc of associacoesManuais) {
+    const nfP = planilha.find((p) => chaveItemPlanilha(p) === assoc.chaveItem);
+    const ca = contaAzul.find((c) => c.id === assoc.caId);
+    if (!nfP || !ca) continue;
+    if (matchados.has(ca.id) || planilhaMatchada.has(assoc.chaveItem)) continue;
+
+    matchados.add(ca.id);
+    planilhaMatchada.add(assoc.chaveItem);
+    const valorOk = valorProximo(ca.valor, vliq(nfP, aliquotaISS));
+    itens.push({
+      status: valorOk ? 'conferido' : 'conferido_diferenca',
+      planilha: nfP,
+      contaAzul: ca,
+      associacaoManual: true,
+    });
+  }
+
+  // 2. Matching automático nos itens restantes.
   for (const nfP of planilha) {
+    const chave = chaveItemPlanilha(nfP);
+    if (planilhaMatchada.has(chave)) continue;
+
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
     if (match) {
       matchados.add(match.id);
-      // Verifica se os valores batem dentro da tolerância de R$1,00
+      planilhaMatchada.add(chave);
       const valorOk = valorProximo(match.valor, vliq(nfP, aliquotaISS));
       itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: match });
     } else {
+      planilhaMatchada.add(chave);
       itens.push({ status: 'pendente', planilha: nfP });
     }
   }
 
+  // 3. NFs do CA sem par na planilha.
   for (const ca of contaAzul) {
     if (!matchados.has(ca.id)) {
       itens.push({ status: 'nao_esperada', contaAzul: ca });
@@ -97,10 +127,11 @@ export function calcularResultado(
   aliquotaISS = 0,
   erroApi?: string,
   erroSalvar?: string,
+  associacoesManuais: AssociacaoManual[] = [],
 ): ResultadoConferencia {
   const itens = erroApi
     ? planilha.map((p) => ({ status: 'pendente' as const, planilha: p }))
-    : conferirNfs(empresa, planilha, contaAzul, aliquotaISS);
+    : conferirNfs(empresa, planilha, contaAzul, aliquotaISS, associacoesManuais);
 
   return {
     empresa, mes, ano,

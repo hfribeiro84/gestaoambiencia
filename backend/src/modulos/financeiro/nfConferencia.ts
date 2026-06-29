@@ -64,8 +64,8 @@ export function conferirNfs(
   aliquotaISS = 0,
   associacoesManuais: AssociacaoManual[] = [],
 ): ItemConferencia[] {
-  const matchados = new Set<string>();         // ca.id já usado
-  const planilhaMatchada = new Set<string>();  // chaveItem já usada
+  const matchados = new Set<string>();  // ca.id já usado
+  const usados = new Set<number>();     // índice na planilha já usado (suporta itens duplicados)
   const itens: ItemConferencia[] = [];
 
   const escolherMatch = empresa === 'netr'
@@ -73,15 +73,15 @@ export function conferirNfs(
     : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
 
   // 1. Associações manuais — têm prioridade absoluta sobre o matching automático.
-  //    Se a mesma CA NF aparecer em múltiplas associações, prevalece a primeira.
+  //    Quando há itens duplicados na planilha (mesma chave), pega o primeiro disponível.
   for (const assoc of associacoesManuais) {
-    const nfP = planilha.find((p) => chaveItemPlanilha(p) === assoc.chaveItem);
+    const pIdx = planilha.findIndex((p, i) => chaveItemPlanilha(p) === assoc.chaveItem && !usados.has(i));
     const ca = contaAzul.find((c) => c.id === assoc.caId);
-    if (!nfP || !ca) continue;
-    if (matchados.has(ca.id) || planilhaMatchada.has(assoc.chaveItem)) continue;
+    if (pIdx === -1 || !ca || matchados.has(ca.id)) continue;
 
     matchados.add(ca.id);
-    planilhaMatchada.add(assoc.chaveItem);
+    usados.add(pIdx);
+    const nfP = planilha[pIdx];
     const valorOk = valorProximo(ca.valor, vliq(nfP, aliquotaISS));
     itens.push({
       status: valorOk ? 'conferido' : 'conferido_diferenca',
@@ -91,19 +91,18 @@ export function conferirNfs(
     });
   }
 
-  // 2. Matching automático nos itens restantes.
-  for (const nfP of planilha) {
-    const chave = chaveItemPlanilha(nfP);
-    if (planilhaMatchada.has(chave)) continue;
-
+  // 2. Matching automático nos itens restantes (por índice — não pula duplicatas).
+  for (let i = 0; i < planilha.length; i++) {
+    if (usados.has(i)) continue;
+    const nfP = planilha[i];
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
     if (match) {
       matchados.add(match.id);
-      planilhaMatchada.add(chave);
+      usados.add(i);
       const valorOk = valorProximo(match.valor, vliq(nfP, aliquotaISS));
       itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: match });
     } else {
-      planilhaMatchada.add(chave);
+      usados.add(i);
       itens.push({ status: 'pendente', planilha: nfP });
     }
   }

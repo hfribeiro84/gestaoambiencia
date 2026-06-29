@@ -697,18 +697,42 @@ export function ConferenciaNF() {
                         )}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
-                        {/* Linha 1 (negrito): nome como aparece no Conta Azul */}
-                        <div className="font-semibold truncate">
-                          {item.contaAzul?.cliente ?? item.planilha?.cliente ?? '—'}
-                        </div>
-                        {/* Linha 2 (cinza): projeto da planilha (matched/pendente) ou descrição da NF (não prevista) */}
                         {(() => {
-                          const sub = item.planilha
-                            ? (item.planilha.descricao || item.planilha.cliente)
-                            : item.contaAzul?.descricao;
-                          return sub ? (
-                            <div className="text-xs text-gray-400 truncate mt-0.5">{sub}</div>
-                          ) : null;
+                          // Com CA: bold = nome fantasia do CA, sub = projeto da planilha
+                          // Pendente (sem CA): bold = projeto da planilha, sub = empresa
+                          // Não prevista (sem planilha): bold = CA.cliente, sub = CA.descricao
+                          if (item.contaAzul && item.planilha) {
+                            return (
+                              <>
+                                <div className="font-semibold truncate">{item.contaAzul.cliente}</div>
+                                <div className="text-xs text-gray-400 truncate mt-0.5">
+                                  {item.planilha.descricao || item.planilha.cliente}
+                                </div>
+                              </>
+                            );
+                          }
+                          if (item.planilha) {
+                            // Pendente: projeto em destaque, empresa abaixo
+                            return (
+                              <>
+                                <div className="font-semibold truncate">
+                                  {item.planilha.descricao || item.planilha.cliente}
+                                </div>
+                                {item.planilha.descricao && (
+                                  <div className="text-xs text-gray-400 truncate mt-0.5">{item.planilha.cliente}</div>
+                                )}
+                              </>
+                            );
+                          }
+                          // Não prevista: só CA
+                          return (
+                            <>
+                              <div className="font-semibold truncate">{item.contaAzul?.cliente ?? '—'}</div>
+                              {item.contaAzul?.descricao && (
+                                <div className="text-xs text-gray-400 truncate mt-0.5">{item.contaAzul.descricao}</div>
+                              )}
+                            </>
+                          );
                         })()}
                       </td>
                       <td className="px-4 py-3 text-center text-gray-500 whitespace-nowrap">

@@ -243,8 +243,15 @@ export async function testarConexao(conta: ContaAzul): Promise<ResultadoTeste> {
       return { ...base, mensagem: `Conta Azul ${conta.toUpperCase()} — app configurado, clique em "Conectar" para autorizar.` };
     }
 
+    let token: string;
+    try {
+      token = await obterTokenValido(conta);
+    } catch (e) {
+      return { ...base, status: 'erro', mensagem: (e as Error).message };
+    }
+
     const resp = await fetch(`${cfg.api_base}/v1/pessoa?pagina=1&tamanho_pagina=1`, {
-      headers: { Authorization: `Bearer ${cred.access_token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (resp.status === 401) {
       return { ...base, status: 'erro', mensagem: 'Token expirado — clique em "Reconectar".' };

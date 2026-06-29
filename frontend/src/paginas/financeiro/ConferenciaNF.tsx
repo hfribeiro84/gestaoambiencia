@@ -614,16 +614,32 @@ export function ConferenciaNF() {
                     </div>
                   ))}
                 </div>
-                <div className="grid grid-cols-2 gap-3 mb-5">
-                  <div className="rounded-lg p-4 bg-gray-50 text-gray-700">
-                    <div className="text-xl font-bold">{formatBRL(totalValorPlanilha)}</div>
-                    <div className="text-sm">Total planilha (bruto)</div>
-                  </div>
-                  <div className="rounded-lg p-4 bg-blue-50 text-blue-700">
-                    <div className="text-xl font-bold">{formatBRL(totalValorCa)}</div>
-                    <div className="text-sm">Total NFs emitidas</div>
-                  </div>
-                </div>
+                {(() => {
+                  const totalValorLiquido = resultado.itens
+                    .filter((i) => i.planilha)
+                    .reduce((s, i) => s + valorLiquido(i.planilha!, aliquotaEfetiva), 0);
+                  const diferenca = totalValorCa - totalValorLiquido;
+                  return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                      <div className="rounded-lg p-4 bg-gray-50 text-gray-700">
+                        <div className="text-xl font-bold">{formatBRL(totalValorPlanilha)}</div>
+                        <div className="text-sm">Total planilha (bruto)</div>
+                      </div>
+                      <div className="rounded-lg p-4 bg-orange-50 text-orange-700">
+                        <div className="text-xl font-bold">{formatBRL(totalValorLiquido)}</div>
+                        <div className="text-sm">Total planilha (líquido)</div>
+                      </div>
+                      <div className="rounded-lg p-4 bg-blue-50 text-blue-700">
+                        <div className="text-xl font-bold">{formatBRL(totalValorCa)}</div>
+                        <div className="text-sm">Total NFs emitidas</div>
+                      </div>
+                      <div className={`rounded-lg p-4 ${Math.abs(diferenca) < 1 ? 'bg-green-50 text-green-700' : diferenca > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'}`}>
+                        <div className="text-xl font-bold">{formatBRL(diferenca)}</div>
+                        <div className="text-sm">Diferença (NF − líquido)</div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             );
           })()}

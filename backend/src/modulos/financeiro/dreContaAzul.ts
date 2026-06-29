@@ -79,10 +79,16 @@ async function buscarPaginado(
     const resp = await chamadaApi(conta, endpoint, { ...params, pagina: String(pagina), tamanho_pagina: '200' });
 
     if (!resp.ok) {
-      const corpo = await resp.text();
-      // 404 pode significar sem dados para o período — retorna vazio
+      // 404 = sem registros no período — comportamento normal da API
       if (resp.status === 404) return todos;
-      throw new Error(`Conta Azul API ${resp.status} [${endpoint}]: ${corpo.slice(0, 300)}`);
+      if (resp.status === 403) {
+        throw new Error(
+          `Conta Azul ${endpoint}: acesso negado (403). O token OAuth não tem permissão para lançamentos financeiros. ` +
+          `Acesse Configurações → aba Financeiro → Conta Azul e clique em "Reconectar" para obter um token com os escopos corretos.`
+        );
+      }
+      const corpo = await resp.text();
+      throw new Error(`Conta Azul API ${resp.status} [${endpoint}]: ${corpo.slice(0, 200)}`);
     }
 
     const data: unknown = await resp.json();

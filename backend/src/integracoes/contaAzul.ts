@@ -90,6 +90,8 @@ export async function urlAutorizacao(conta: ContaAzul): Promise<string> {
     client_id: cfg.client_id,
     redirect_uri: redirectUri(conta),
     state: provedor(conta),
+    // Escopos necessários para lançamentos financeiros (receitas e despesas)
+    scope: 'financas financeiro sales accounting openid',
   });
   return `${cfg.authorize_url}?${params.toString()}`;
 }

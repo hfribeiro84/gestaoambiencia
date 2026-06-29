@@ -1327,20 +1327,39 @@ function AbaConfiguracoes({
           const statusRec = rec?.status;
           const statusDesp = desp?.status;
 
-          // 404 no CA = sem registros no período (comportamento normal da API)
-          const semDadosRec = statusRec === 404 || (infoRec?.quantidade ?? 0) === 0;
-          const semDadosDesp = statusDesp === 404 || (infoDesp?.quantidade ?? 0) === 0;
+          // 404 = sem registros no período (normal); 403 = token sem permissão (precisa reconectar)
+          const semPermissaoRec = statusRec === 403;
+          const semPermissaoDesp = statusDesp === 403;
+          const semDadosRec = !semPermissaoRec && (statusRec === 404 || (infoRec?.quantidade ?? 0) === 0);
+          const semDadosDesp = !semPermissaoDesp && (statusDesp === 404 || (infoDesp?.quantidade ?? 0) === 0);
           const okRec = statusRec === 200 && (infoRec?.quantidade ?? 0) > 0;
           const okDesp = statusDesp === 200 && (infoDesp?.quantidade ?? 0) > 0;
+          const algum403 = semPermissaoRec || semPermissaoDesp;
 
           return (
             <div className="space-y-2 text-sm">
+              {algum403 && (
+                <div className="p-3 bg-orange-50 border border-orange-300 rounded text-sm text-orange-800">
+                  <div className="font-semibold mb-1">⚠️ Token sem permissão para lançamentos financeiros</div>
+                  <div className="text-xs">
+                    O token OAuth atual não tem acesso às receitas/despesas do CA. Isso acontece quando a autorização foi feita
+                    sem os escopos de finanças. Para corrigir:
+                    <ol className="list-decimal ml-4 mt-1 space-y-0.5">
+                      <li>Vá em <b>Integrações</b> no menu lateral</li>
+                      <li>Clique em <b>Reconectar</b> no Conta Azul ASS (ou NETR)</li>
+                      <li>Autorize novamente no site do Conta Azul</li>
+                      <li>Volte aqui e teste novamente</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
               {/* Receitas */}
-              <div className={`flex items-start gap-3 p-3 rounded border ${okRec ? 'bg-green-50 border-green-200' : semDadosRec ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg mt-0.5">{okRec ? '✅' : semDadosRec ? '⚠️' : '❌'}</span>
+              <div className={`flex items-start gap-3 p-3 rounded border ${okRec ? 'bg-green-50 border-green-200' : semPermissaoRec ? 'bg-orange-50 border-orange-200' : semDadosRec ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
+                <span className="text-lg mt-0.5">{okRec ? '✅' : semPermissaoRec ? '🔒' : semDadosRec ? '⚠️' : '❌'}</span>
                 <div>
                   <div className="font-medium">
-                    Receitas — {okRec ? `${infoRec!.quantidade} item(s) encontrado(s)` : semDadosRec ? 'Sem lançamentos neste período' : `Erro HTTP ${statusRec}`}
+                    Receitas — {okRec ? `${infoRec!.quantidade} item(s) encontrado(s)` : semPermissaoRec ? 'Permissão negada (403)' : semDadosRec ? 'Sem lançamentos neste período' : `Erro HTTP ${statusRec}`}
                   </div>
                   {semDadosRec && statusRec === 404 && (
                     <div className="text-xs text-yellow-700 mt-0.5">
@@ -1356,11 +1375,11 @@ function AbaConfiguracoes({
               </div>
 
               {/* Despesas */}
-              <div className={`flex items-start gap-3 p-3 rounded border ${okDesp ? 'bg-green-50 border-green-200' : semDadosDesp ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg mt-0.5">{okDesp ? '✅' : semDadosDesp ? '⚠️' : '❌'}</span>
+              <div className={`flex items-start gap-3 p-3 rounded border ${okDesp ? 'bg-green-50 border-green-200' : semPermissaoDesp ? 'bg-orange-50 border-orange-200' : semDadosDesp ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
+                <span className="text-lg mt-0.5">{okDesp ? '✅' : semPermissaoDesp ? '🔒' : semDadosDesp ? '⚠️' : '❌'}</span>
                 <div>
                   <div className="font-medium">
-                    Despesas — {okDesp ? `${infoDesp!.quantidade} item(s) encontrado(s)` : semDadosDesp ? 'Sem lançamentos neste período' : `Erro HTTP ${statusDesp}`}
+                    Despesas — {okDesp ? `${infoDesp!.quantidade} item(s) encontrado(s)` : semPermissaoDesp ? 'Permissão negada (403)' : semDadosDesp ? 'Sem lançamentos neste período' : `Erro HTTP ${statusDesp}`}
                   </div>
                   {semDadosDesp && statusDesp === 404 && (
                     <div className="text-xs text-yellow-700 mt-0.5">

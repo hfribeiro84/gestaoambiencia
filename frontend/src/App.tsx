@@ -7,6 +7,7 @@ import { Login } from './paginas/Login';
 import { Dashboard } from './paginas/Dashboard';
 import { Integracoes } from './paginas/Integracoes';
 import { ConferenciaNF } from './paginas/financeiro/ConferenciaNF';
+import { DREGerencial } from './paginas/financeiro/DREGerencial';
 
 export default function App() {
   return (
@@ -40,6 +41,16 @@ export default function App() {
               <RotaProtegida>
                 <Layout>
                   <ConferenciaNF />
+                </Layout>
+              </RotaProtegida>
+            }
+          />
+          <Route
+            path="/financeiro/dre"
+            element={
+              <RotaProtegida>
+                <Layout>
+                  <DREGerencial />
                 </Layout>
               </RotaProtegida>
             }

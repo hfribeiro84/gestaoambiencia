@@ -12,6 +12,7 @@ import { rotasSaude } from './rotas/saude.rotas';
 import { rotasAuth } from './rotas/auth.rotas';
 import { rotasIntegracoes } from './rotas/integracoes.rotas';
 import { rotasFinanceiro } from './rotas/financeiro.rotas';
+import { rotasDre } from './rotas/dre.rotas';
 import { tratadorDeErros } from './middleware/erros';
 import { executarSincronizacao } from './servicos/sincronizacao';
 
@@ -26,6 +27,7 @@ app.use('/api', rotasSaude);
 app.use('/api', rotasAuth);
 app.use('/api', rotasIntegracoes);
 app.use('/api', rotasFinanceiro);
+app.use('/api', rotasDre);
 
 // Tratador de erros (sempre por último).
 app.use(tratadorDeErros);

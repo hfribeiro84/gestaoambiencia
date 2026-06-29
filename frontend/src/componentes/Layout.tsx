@@ -13,7 +13,7 @@ const itensMenu = [
   { rotulo: 'Integrações', caminho: '/integracoes', ativo: true },
   { rotulo: '— Financeiro —', caminho: '', ativo: false, separador: true },
   { rotulo: 'Conferência de NF', caminho: '/financeiro/conferencia-nf', ativo: true },
-  { rotulo: 'DRE Gerencial', caminho: '/financeiro/dre', ativo: false },
+  { rotulo: 'DRE Gerencial', caminho: '/financeiro/dre', ativo: true },
   { rotulo: 'Sistema de Rateio', caminho: '/financeiro/rateio', ativo: false },
   { rotulo: '— Outros módulos —', caminho: '', ativo: false, separador: true },
   { rotulo: 'Resultado por Projeto', caminho: '/projetos', ativo: false },

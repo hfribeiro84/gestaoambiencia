@@ -175,7 +175,38 @@ rotasFinanceiro.get('/financeiro/debug/matching/:empresa/:mes/:ano', autenticar,
 });
 
 // ---------------------------------------------------------------------------
-// Debug
+// Debug DRE — explorar endpoints de receitas/despesas
+// ---------------------------------------------------------------------------
+
+rotasFinanceiro.get('/financeiro/debug/dre/:empresa/:mes/:ano', autenticar, async (req, res) => {
+  const conta = (req.params.empresa === 'ass' ? 'ass' : 'netr') as 'ass' | 'netr';
+  const mes = req.params.mes.padStart(2, '0');
+  const ano = req.params.ano;
+  const de = `${ano}-${mes}-01`;
+  const ate = `${ano}-${mes}-${String(new Date(Number(ano), Number(req.params.mes), 0).getDate()).padStart(2, '0')}`;
+
+  async function explorar(endpoint: string, filtros: Record<string, string>) {
+    try {
+      const r = await chamadaApi(conta, endpoint, filtros);
+      const texto = await r.text();
+      let corpo: unknown;
+      try { corpo = JSON.parse(texto); } catch { corpo = texto; }
+      return { endpoint, status: r.status, corpo };
+    } catch (e) {
+      return { endpoint, status: 0, erro: (e as Error).message };
+    }
+  }
+
+  const [receitas, despesas] = await Promise.all([
+    explorar('/v1/searchinstallmentstoreceivebyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '0', tamanhoPagina: '3' }),
+    explorar('/v1/searchinstallmentstopaybyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '0', tamanhoPagina: '3' }),
+  ]);
+
+  res.json({ de, ate, receitas, despesas });
+});
+
+// ---------------------------------------------------------------------------
+// Debug (antigo)
 // ---------------------------------------------------------------------------
 
 const CANDIDATOS = ['/v1/pessoa', '/v1/notas-fiscais-servico', '/v1/notas-fiscais', '/v1/conta-receber', '/v1/lancamento', '/v1/venda'];

@@ -650,8 +650,10 @@ export function ConferenciaNF() {
                 <tr>
                   <th className="px-4 py-3 text-left">Status</th>
                   <th className="px-4 py-3 text-left">Cliente / Projeto</th>
-                  <th className="px-4 py-3 text-right">Valor planilha</th>
                   <th className="px-4 py-3 text-center">NF nº</th>
+                  <th className="px-4 py-3 text-right">Valor planilha</th>
+                  <th className="px-4 py-3 text-center">Ret. ISS</th>
+                  <th className="px-4 py-3 text-right">Valor líquido</th>
                   <th className="px-4 py-3 text-right">Valor NF</th>
                   <th className="px-4 py-3 text-right">Diferença</th>
                   <th className="px-4 py-3 text-center w-24"></th>
@@ -666,7 +668,7 @@ export function ConferenciaNF() {
                   const diferenca = temMatch && vliq !== null
                     ? (item.contaAzul?.valor ?? 0) - vliq
                     : null;
-                  const temIss = item.planilha?.retencaoISS && aliquotaEfetiva > 0;
+                  const retencaoISS = item.planilha?.retencaoISS ?? null;
 
                   return (
                     <tr key={idx} className="hover:bg-gray-50">
@@ -688,20 +690,25 @@ export function ConferenciaNF() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
-                        {item.planilha ? (
-                          <div>
-                            <div>{formatBRL(item.planilha.valorTotal)}</div>
-                            {temIss && vliq !== null && (
-                              <div className="text-xs text-orange-500">
-                                líq. {formatBRL(vliq)}
-                              </div>
-                            )}
-                          </div>
-                        ) : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-500">
+                      <td className="px-4 py-3 text-center text-gray-500 whitespace-nowrap">
                         {item.contaAzul?.numero ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {item.planilha ? formatBRL(item.planilha.valorTotal) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center whitespace-nowrap">
+                        {retencaoISS === null ? '—' : retencaoISS ? (
+                          <span className="px-1.5 py-0.5 rounded text-xs font-medium text-orange-700 bg-orange-50">Sim</span>
+                        ) : (
+                          <span className="text-xs text-gray-400">Não</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {vliq !== null ? (
+                          <span className={retencaoISS && aliquotaEfetiva > 0 ? 'text-orange-600' : ''}>
+                            {formatBRL(vliq)}
+                          </span>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {item.contaAzul ? formatBRL(item.contaAzul.valor) : '—'}
@@ -743,7 +750,7 @@ export function ConferenciaNF() {
             )}
             {aliquotaEfetiva > 0 && resultado.itens.some((i) => i.planilha?.retencaoISS) && (
               <div className="px-4 py-3 border-t text-xs text-gray-400">
-                ISS {aliquotaEfetiva}% — coluna Diferença calculada sobre o valor líquido (planilha bruto − ISS).
+                ISS {aliquotaEfetiva}% — coluna Diferença compara Valor NF com Valor Líquido (bruto − ISS retido).
               </div>
             )}
           </div>

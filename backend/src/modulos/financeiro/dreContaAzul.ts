@@ -4,31 +4,53 @@ import type { LancamentoCA, ItemExtrato } from './dreTypes';
 type ContaCA = 'ass' | 'netr';
 
 // ──────────────────────────────────────────────────────────────
-// Helpers
+// Endpoints da API Financeira do Conta Azul (v2 — api-v2.contaazul.com)
+// Referência: https://developers.contaazul.com/docs/financial-apis-openapi
 // ──────────────────────────────────────────────────────────────
 
+const EP_RECEITAS = '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar';
+const EP_DESPESAS = '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar';
+const EP_TRANSFERENCIAS = '/v1/financeiro/transferencias';
+
+// tamanho_pagina aceita apenas: 10, 20, 50, 100, 200, 500, 1000
+const TAMANHO_PAGINA = 200;
+
+// ──────────────────────────────────────────────────────────────
+// Helpers de extração de campos (resposta v2)
+// ──────────────────────────────────────────────────────────────
+
+/** Categoria vem como array `categorias: [{ id, nome }]`. Usa a primeira. */
 function extrairCategoria(item: Record<string, unknown>): string {
+  const cats = item.categorias;
+  if (Array.isArray(cats) && cats.length > 0) {
+    const nome = (cats[0] as Record<string, unknown>)?.nome;
+    if (typeof nome === 'string') return nome;
+  }
+  // Fallbacks (formatos antigos / outras respostas)
   const cat = item.categoria;
-  if (cat && typeof cat === 'object') return (cat as Record<string, unknown>).nome as string ?? '';
+  if (cat && typeof cat === 'object') return ((cat as Record<string, unknown>).nome as string) ?? '';
   if (typeof cat === 'string') return cat;
   return '';
 }
 
 function extrairValor(item: Record<string, unknown>): number {
-  return (item.valorTotal ?? item.valor ?? item.valorLiquido ?? 0) as number;
+  return (item.total ?? item.valorTotal ?? item.valor ?? 0) as number;
+}
+
+function extrairPago(item: Record<string, unknown>): number {
+  return (item.pago ?? 0) as number;
 }
 
 function extrairDataVencimento(item: Record<string, unknown>): string {
-  return (item.dataVencimento ?? item.data_vencimento ?? '') as string;
+  return (item.data_vencimento ?? item.dataVencimento ?? '') as string;
 }
 
-function extrairDataPagamento(item: Record<string, unknown>): string | null {
-  const d = item.dataPagamento ?? item.dataBaixa ?? item.dataRecebimento ?? null;
-  return d as string | null;
+function extrairDataCompetencia(item: Record<string, unknown>): string {
+  return (item.data_competencia ?? item.dataCompetencia ?? '') as string;
 }
 
 function extrairSituacao(item: Record<string, unknown>): string {
-  return (item.situacao ?? item.status ?? '') as string;
+  return (item.status_traduzido ?? item.status ?? item.situacao ?? '') as string;
 }
 
 function extrairDescricao(item: Record<string, unknown>): string {
@@ -39,34 +61,32 @@ function extrairId(item: Record<string, unknown>): string {
   return (item.id ?? item.codigo ?? '') as string;
 }
 
-/** Extrai o array de itens de uma resposta paginada (múltiplos formatos CA). */
-function extrairItens(data: unknown): unknown[] {
+/** Extrai o array de itens de uma resposta paginada (v2 usa `itens`). */
+function extrairItens(data: unknown): Record<string, unknown>[] {
   if (!data || typeof data !== 'object') return [];
   const d = data as Record<string, unknown>;
-  if (Array.isArray(d.content)) return d.content;       // Spring Boot
-  if (Array.isArray(d.itens)) return d.itens;            // CA formato A
-  if (Array.isArray(d.data)) return d.data;              // CA formato B
-  if (Array.isArray(d.items)) return d.items;            // genérico
-  if (Array.isArray(d.records)) return d.records;        // CA formato C
-  if (Array.isArray(data)) return data as unknown[];     // array direto
+  if (Array.isArray(d.itens)) return d.itens as Record<string, unknown>[];
+  if (Array.isArray(d.content)) return d.content as Record<string, unknown>[];
+  if (Array.isArray(d.data)) return d.data as Record<string, unknown>[];
+  if (Array.isArray(d.items)) return d.items as Record<string, unknown>[];
+  if (Array.isArray(data)) return data as Record<string, unknown>[];
   return [];
 }
 
-/** Total de páginas de uma resposta paginada. */
-function extrairTotalPaginas(data: unknown): number {
-  if (!data || typeof data !== 'object') return 1;
+/** Total de itens da consulta (v2 usa `itens_totais`). */
+function extrairTotalItens(data: unknown): number {
+  if (!data || typeof data !== 'object') return 0;
   const d = data as Record<string, unknown>;
-  if (typeof d.totalPages === 'number') return d.totalPages || 1;
-  if (typeof d.total_pages === 'number') return d.total_pages || 1;
-  const pag = d.paginacao as Record<string, unknown> | undefined;
-  if (pag && typeof pag.total_paginas === 'number') return pag.total_paginas || 1;
-  const meta = d.meta as Record<string, unknown> | undefined;
-  if (meta && typeof meta.total_pages === 'number') return meta.total_pages || 1;
-  if (meta && typeof meta.totalPages === 'number') return meta.totalPages || 1;
-  return 1;
+  if (typeof d.itens_totais === 'number') return d.itens_totais;
+  if (typeof d.total_itens === 'number') return d.total_itens;
+  if (typeof d.totalItens === 'number') return d.totalItens;
+  return 0;
 }
 
-/** Busca todos os itens de um endpoint paginado (tamanho 200). */
+// ──────────────────────────────────────────────────────────────
+// Busca paginada genérica
+// ──────────────────────────────────────────────────────────────
+
 async function buscarPaginado(
   conta: ContaCA,
   endpoint: string,
@@ -76,15 +96,19 @@ async function buscarPaginado(
   let pagina = 1;
 
   while (true) {
-    const resp = await chamadaApi(conta, endpoint, { ...params, pagina: String(pagina), tamanho_pagina: '200' });
+    const resp = await chamadaApi(conta, endpoint, {
+      ...params,
+      pagina: String(pagina),
+      tamanho_pagina: String(TAMANHO_PAGINA),
+    });
 
     if (!resp.ok) {
-      // 404 = sem registros no período — comportamento normal da API
+      // 404 = sem registros no período — retorna o que tiver
       if (resp.status === 404) return todos;
       if (resp.status === 403) {
         throw new Error(
-          `Conta Azul ${endpoint}: acesso negado (403). O token OAuth não tem permissão para lançamentos financeiros. ` +
-          `Acesse Configurações → aba Financeiro → Conta Azul e clique em "Reconectar" para obter um token com os escopos corretos.`
+          `Conta Azul ${endpoint}: acesso negado (403). O token OAuth não tem permissão para ` +
+          `lançamentos financeiros. Reconecte o Conta Azul em Integrações.`,
         );
       }
       const corpo = await resp.text();
@@ -92,11 +116,17 @@ async function buscarPaginado(
     }
 
     const data: unknown = await resp.json();
-    const itens = extrairItens(data) as Record<string, unknown>[];
+    const itens = extrairItens(data);
     todos.push(...itens);
 
-    const totalPaginas = extrairTotalPaginas(data);
-    if (pagina >= totalPaginas || itens.length === 0) break;
+    const totalItens = extrairTotalItens(data);
+    if (
+      itens.length === 0 ||
+      itens.length < TAMANHO_PAGINA ||
+      (totalItens > 0 && todos.length >= totalItens)
+    ) {
+      break;
+    }
     pagina++;
   }
 
@@ -104,114 +134,79 @@ async function buscarPaginado(
 }
 
 // ──────────────────────────────────────────────────────────────
-// Endpoints CA
+// Mapeamento item CA → LancamentoCA
 // ──────────────────────────────────────────────────────────────
 
-const EP_RECEITAS = '/v1/searchinstallmentstoreceivebyfilter';
-const EP_DESPESAS = '/v1/searchinstallmentstopaybyfilter';
-const EP_TRANSFERENCIAS = '/v1/searchAccountingExportTransfers';
+function mapearItem(item: Record<string, unknown>, tipo: 'receita' | 'despesa'): LancamentoCA {
+  return {
+    id: extrairId(item),
+    categoria: extrairCategoria(item),
+    valor: extrairValor(item),
+    pago: extrairPago(item),
+    dataVencimento: extrairDataVencimento(item),
+    dataCompetencia: extrairDataCompetencia(item),
+    dataPagamento: null, // não retornado pela API v2
+    situacao: extrairSituacao(item),
+    descricao: extrairDescricao(item),
+    tipo,
+  };
+}
 
 // ──────────────────────────────────────────────────────────────
 // Exportações públicas
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Busca todos os lançamentos (receitas + despesas) no intervalo de datas.
- * Filtra por dataVencimento para cobrir o período; inclui dataPagamento
- * para a lógica de agrupamento por mês pago vs. previsto.
+ * Busca todos os lançamentos (receitas + despesas) cujo VENCIMENTO esteja
+ * no intervalo [de, ate]. A API v2 exige filtro por data de vencimento.
  */
 export async function buscarLancamentosCA(
   empresa: ContaCA,
   de: string,
   ate: string,
 ): Promise<LancamentoCA[]> {
+  const filtro = { data_vencimento_de: de, data_vencimento_ate: ate };
+
   const [itensReceita, itensDespesa] = await Promise.all([
-    buscarPaginado(empresa, EP_RECEITAS, { dataVencimentoInicio: de, dataVencimentoFim: ate }),
-    buscarPaginado(empresa, EP_DESPESAS, { dataVencimentoInicio: de, dataVencimentoFim: ate }),
+    buscarPaginado(empresa, EP_RECEITAS, filtro),
+    buscarPaginado(empresa, EP_DESPESAS, filtro),
   ]);
 
-  const receitas: LancamentoCA[] = itensReceita.map((item) => ({
-    id: extrairId(item),
-    categoria: extrairCategoria(item),
-    valor: extrairValor(item),
-    dataVencimento: extrairDataVencimento(item),
-    dataPagamento: extrairDataPagamento(item),
-    situacao: extrairSituacao(item),
-    descricao: extrairDescricao(item),
-    tipo: 'receita',
-  }));
-
-  const despesas: LancamentoCA[] = itensDespesa.map((item) => ({
-    id: extrairId(item),
-    categoria: extrairCategoria(item),
-    valor: extrairValor(item),
-    dataVencimento: extrairDataVencimento(item),
-    dataPagamento: extrairDataPagamento(item),
-    situacao: extrairSituacao(item),
-    descricao: extrairDescricao(item),
-    tipo: 'despesa',
-  }));
-
-  return [...receitas, ...despesas];
-}
-
-/** Busca o saldo inicial de uma conta financeira em uma data. */
-export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promise<number> {
-  try {
-    const resp = await chamadaApi(empresa, '/v1/financeiro/eventos-financeiros/saldo-inicial', { data });
-    if (!resp.ok) return 0;
-    const json = (await resp.json()) as Record<string, unknown>;
-    return (json.saldo ?? json.valor ?? 0) as number;
-  } catch {
-    return 0;
-  }
+  return [
+    ...itensReceita.map((i) => mapearItem(i, 'receita')),
+    ...itensDespesa.map((i) => mapearItem(i, 'despesa')),
+  ];
 }
 
 /**
- * Busca lançamentos para o extrato de um mês específico.
- * Usa janela expandida (mês anterior + seguinte) e filtra pelo dataPagamento
- * dentro do mês alvo, para capturar pagamentos que venceram em outro mês.
+ * Busca lançamentos para o extrato de um mês específico (por vencimento).
  */
 export async function buscarLancamentosExtrato(
   empresa: ContaCA,
   de: string,
   ate: string,
 ): Promise<LancamentoCA[]> {
-  // Janela expandida: 1 mês antes e 1 mês depois
-  const dataInicio = new Date(de);
-  dataInicio.setMonth(dataInicio.getMonth() - 1);
-  const dataFim = new Date(ate);
-  dataFim.setMonth(dataFim.getMonth() + 1);
+  return buscarLancamentosCA(empresa, de, ate);
+}
 
-  const deExt = dataInicio.toISOString().slice(0, 10);
-  const ateExt = dataFim.toISOString().slice(0, 10);
-
-  const [itensReceita, itensDespesa] = await Promise.all([
-    buscarPaginado(empresa, EP_RECEITAS, { dataVencimentoInicio: deExt, dataVencimentoFim: ateExt }),
-    buscarPaginado(empresa, EP_DESPESAS, { dataVencimentoInicio: deExt, dataVencimentoFim: ateExt }),
-  ]);
-
-  const mapearItem = (item: Record<string, unknown>, tipo: 'receita' | 'despesa'): LancamentoCA => ({
-    id: extrairId(item),
-    categoria: extrairCategoria(item),
-    valor: extrairValor(item),
-    dataVencimento: extrairDataVencimento(item),
-    dataPagamento: extrairDataPagamento(item),
-    situacao: extrairSituacao(item),
-    descricao: extrairDescricao(item),
-    tipo,
-  });
-
-  const todos: LancamentoCA[] = [
-    ...itensReceita.map((i) => mapearItem(i, 'receita')),
-    ...itensDespesa.map((i) => mapearItem(i, 'despesa')),
-  ];
-
-  // Filtra por dataPagamento dentro da janela alvo; se não pago, usa dataVencimento
-  return todos.filter((l) => {
-    const dataRef = l.dataPagamento ?? l.dataVencimento;
-    return dataRef >= de && dataRef <= ate;
-  });
+/** Busca o saldo inicial das contas financeiras em uma data. */
+export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promise<number> {
+  try {
+    const resp = await chamadaApi(empresa, '/v1/financeiro/eventos-financeiros/saldo-inicial', {
+      data_inicio: data,
+      data_fim: data,
+    });
+    if (!resp.ok) return 0;
+    const json = (await resp.json()) as Record<string, unknown>;
+    // Resposta pode trazer lista de contas; soma os saldos disponíveis
+    const itens = extrairItens(json);
+    if (itens.length > 0) {
+      return itens.reduce((acc, it) => acc + ((it.saldo_inicial ?? it.saldo ?? it.valor ?? 0) as number), 0);
+    }
+    return (json.saldo ?? json.valor ?? 0) as number;
+  } catch {
+    return 0;
+  }
 }
 
 /** Busca transferências entre contas financeiras no período. */
@@ -222,13 +217,13 @@ export async function buscarTransferencias(
 ): Promise<ItemExtrato[]> {
   try {
     const itens = await buscarPaginado(empresa, EP_TRANSFERENCIAS, {
-      dataInicio: de,
-      dataFim: ate,
+      data_inicio: de,
+      data_fim: ate,
     });
 
     return itens.map((item) => ({
       id: extrairId(item),
-      data: (item.data ?? item.dataTransferencia ?? '') as string,
+      data: (item.data ?? item.data_transferencia ?? item.dataTransferencia ?? '') as string,
       tipo: 'transferencia' as const,
       descricao: extrairDescricao(item),
       categoria: 'Transferência',

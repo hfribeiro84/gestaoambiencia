@@ -414,42 +414,25 @@ rotasDre.get('/financeiro/dre/debug/raw/:empresa/:mes/:ano', autenticar, async (
     const de = primeiroDia(mes, ano);
     const ate = ultimoDia(mes, ano);
 
-    // Testa variações de parâmetro para descobrir o formato certo
-    async function testar(endpoint: string, params: Record<string, string>) {
-      const r = await chamadaApi(conta, endpoint, params);
+    async function testar(endpoint: string) {
+      const r = await chamadaApi(conta, endpoint, {
+        data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '10',
+      });
       const texto = await r.text();
       let corpo: unknown;
       try { corpo = JSON.parse(texto); } catch { corpo = texto.slice(0, 300); }
-      return { status: r.status, params, corpo };
+      return { status: r.status, corpo };
     }
 
-    const [
-      recCamel, recSnake, recSemFiltro,
-      despCamel, despSnake, despSemFiltro,
-    ] = await Promise.all([
-      // Variação 1: camelCase (o que usamos atualmente)
-      testar('/v1/searchinstallmentstoreceivebyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '1', tamanho_pagina: '3' }),
-      // Variação 2: snake_case
-      testar('/v1/searchinstallmentstoreceivebyfilter', { data_vencimento_inicio: de, data_vencimento_fim: ate, pagina: '1', tamanho_pagina: '3' }),
-      // Variação 3: sem filtro de data (para ver se o endpoint funciona em geral)
-      testar('/v1/searchinstallmentstoreceivebyfilter', { pagina: '1', tamanho_pagina: '3' }),
-      testar('/v1/searchinstallmentstopaybyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '1', tamanho_pagina: '3' }),
-      testar('/v1/searchinstallmentstopaybyfilter', { data_vencimento_inicio: de, data_vencimento_fim: ate, pagina: '1', tamanho_pagina: '3' }),
-      testar('/v1/searchinstallmentstopaybyfilter', { pagina: '1', tamanho_pagina: '3' }),
+    const [respRec, respDesp] = await Promise.all([
+      testar('/v1/financeiro/eventos-financeiros/contas-a-receber/buscar'),
+      testar('/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar'),
     ]);
 
     res.json({
       empresa, mes, ano, de, ate,
-      receitas: {
-        camelCase: recCamel,
-        snakeCase: recSnake,
-        semFiltro: recSemFiltro,
-      },
-      despesas: {
-        camelCase: despCamel,
-        snakeCase: despSnake,
-        semFiltro: despSemFiltro,
-      },
+      receitas: respRec,
+      despesas: respDesp,
     });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });

@@ -22,10 +22,12 @@ export interface DreMapeamento {
 export interface LancamentoCA {
   id: string;
   categoria: string;
-  valor: number;
+  valor: number;            // valor total da parcela (campo `total` do CA)
+  pago: number;             // valor já pago/recebido (campo `pago` do CA)
   dataVencimento: string;
-  dataPagamento: string | null;
-  situacao: string;
+  dataCompetencia: string;  // campo `data_competencia` do CA
+  dataPagamento: string | null; // não disponível na API v2 (mantido por compatibilidade)
+  situacao: string;         // status_traduzido (EM_ABERTO, RECEBIDO, ATRASADO, ...)
   descricao: string;
   tipo: 'receita' | 'despesa';
 }

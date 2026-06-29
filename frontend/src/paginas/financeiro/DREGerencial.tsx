@@ -1309,70 +1309,52 @@ function AbaConfiguracoes({
         )}
 
         {diag && (() => {
-          type VariacaoDiag = { status: number; params: Record<string, string>; corpo: unknown };
-          type GrupoDiag = { camelCase: VariacaoDiag; snakeCase: VariacaoDiag; semFiltro: VariacaoDiag };
-          const recGrupo = diag.receitas as GrupoDiag;
-          const despGrupo = diag.despesas as GrupoDiag;
+          type DiagResp = { status: number; corpo: unknown };
+          const rec = diag.receitas as DiagResp;
+          const desp = diag.despesas as DiagResp;
 
-          function contarItens(corpo: unknown): { chave: string; quantidade: number; primeiro: Record<string, unknown> | null } | null {
-            if (!corpo || typeof corpo !== 'object') return null;
-            const d = corpo as Record<string, unknown>;
-            for (const chave of ['data', 'content', 'itens', 'items', 'records']) {
-              if (Array.isArray(d[chave])) {
-                const arr = d[chave] as Record<string, unknown>[];
-                return { chave, quantidade: arr.length, primeiro: arr[0] ?? null };
+          function info(corpo: unknown): { quantidade: number; primeiro: Record<string, unknown> | null } {
+            if (corpo && typeof corpo === 'object') {
+              const d = corpo as Record<string, unknown>;
+              if (Array.isArray(d.itens)) {
+                const arr = d.itens as Record<string, unknown>[];
+                return { quantidade: arr.length, primeiro: arr[0] ?? null };
               }
             }
-            if (Array.isArray(corpo)) {
-              const arr = corpo as Record<string, unknown>[];
-              return { chave: '(array direto)', quantidade: arr.length, primeiro: arr[0] ?? null };
-            }
-            return null;
+            return { quantidade: 0, primeiro: null };
           }
 
-          function renderVariacao(label: string, v: VariacaoDiag) {
-            const info = contarItens(v.corpo);
-            const ok = v.status === 200 && (info?.quantidade ?? 0) > 0;
-            const semDados = v.status === 404 || (v.status === 200 && (info?.quantidade ?? 0) === 0);
+          function renderLinha(label: string, v: DiagResp) {
+            const { quantidade, primeiro } = info(v.corpo);
+            const ok = v.status === 200 && quantidade > 0;
             const semPerm = v.status === 403;
-            const cor = ok ? 'bg-green-50 border-green-200 text-green-800' : semPerm ? 'bg-orange-50 border-orange-200 text-orange-800' : semDados ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-red-50 border-red-200 text-red-800';
-            const icone = ok ? '✅' : semPerm ? '🔒' : semDados ? '—' : '❌';
+            const semDados = v.status === 404 || (v.status === 200 && quantidade === 0);
+            const cor = ok ? 'bg-green-50 border-green-200' : semPerm ? 'bg-orange-50 border-orange-200' : semDados ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200';
+            const icone = ok ? '✅' : semPerm ? '🔒' : semDados ? '⚠️' : '❌';
             return (
-              <div key={label} className={`flex items-start gap-2 p-2 rounded border text-xs ${cor}`}>
-                <span>{icone}</span>
-                <div>
-                  <span className="font-medium">{label}:</span>{' '}
-                  {ok ? `${info!.quantidade} item(s) — campo "${info!.chave}"` : semPerm ? 'Permissão negada (403)' : semDados ? `Sem dados (HTTP ${v.status})` : `Erro HTTP ${v.status}`}
-                  {ok && info?.primeiro && (() => {
-                    const p = info.primeiro!;
-                    const campos = Object.keys(p).join(' · ');
-                    return (
-                      <div className="mt-1 font-mono text-gray-500 break-all">{campos}</div>
-                    );
-                  })()}
+              <div className={`flex items-start gap-3 p-3 rounded border ${cor}`}>
+                <span className="text-lg mt-0.5">{icone}</span>
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {label} — {ok ? `${quantidade} item(s) encontrado(s)` : semPerm ? 'Permissão negada (403) — reconecte o CA' : semDados ? 'Sem lançamentos neste período' : `Erro HTTP ${v.status}`}
+                  </div>
+                  {semDados && v.status === 404 && (
+                    <div className="text-xs text-yellow-700 mt-0.5">Tente um mês que tenha lançamentos cadastrados no CA.</div>
+                  )}
+                  {ok && primeiro && (
+                    <div className="text-xs text-gray-600 mt-1 font-mono break-all">
+                      Campos: {Object.keys(primeiro).join(' · ')}
+                    </div>
+                  )}
                 </div>
               </div>
             );
           }
 
           return (
-            <div className="space-y-3 text-sm">
-              <div>
-                <div className="font-medium mb-1 text-gray-700">Receitas a Receber</div>
-                <div className="space-y-1">
-                  {renderVariacao('dataVencimentoInicio (camelCase)', recGrupo.camelCase)}
-                  {renderVariacao('data_vencimento_inicio (snake_case)', recGrupo.snakeCase)}
-                  {renderVariacao('Sem filtro de data', recGrupo.semFiltro)}
-                </div>
-              </div>
-              <div>
-                <div className="font-medium mb-1 text-gray-700">Despesas a Pagar</div>
-                <div className="space-y-1">
-                  {renderVariacao('dataVencimentoInicio (camelCase)', despGrupo.camelCase)}
-                  {renderVariacao('data_vencimento_inicio (snake_case)', despGrupo.snakeCase)}
-                  {renderVariacao('Sem filtro de data', despGrupo.semFiltro)}
-                </div>
-              </div>
+            <div className="space-y-2 text-sm">
+              {renderLinha('Receitas', rec)}
+              {renderLinha('Despesas', desp)}
             </div>
           );
         })()}</div>

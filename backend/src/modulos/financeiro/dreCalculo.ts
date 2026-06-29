@@ -150,24 +150,11 @@ function somarSubcategorias(linha: LinhaDRE): void {
 // Determinação do mês do lançamento
 // ──────────────────────────────────────────────────────────────
 
-function determinarMesLancamento(
-  lancamento: LancamentoCA,
-  hoje: Date,
-): string | null {
+function determinarMesLancamento(lancamento: LancamentoCA): string | null {
+  // Regime por vencimento: cada parcela entra no mês do seu vencimento.
+  // (A API v2 do CA exige filtro por vencimento e não retorna data de pagamento.)
   const vencimento = lancamento.dataVencimento;
   if (!vencimento) return null;
-
-  const [anoV, mesV] = vencimento.split('-').map(Number);
-  const dataVenc = new Date(anoV, mesV - 1, 1);
-  const inicioMesAtual = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-
-  if (dataVenc < inicioMesAtual) {
-    // Mês passado: usa dataPagamento se existir
-    if (lancamento.dataPagamento) return mesAno(lancamento.dataPagamento);
-    return null; // não pago ainda em mês passado — ignora
-  }
-
-  // Mês atual ou futuro: usa dataVencimento
   return mesAno(vencimento);
 }
 
@@ -261,7 +248,6 @@ export async function calcularDRE(
 ): Promise<DadosDRE> {
   const meses = janela12Meses(mesRef, anoRef);
   const { de, ate } = inicioFimJanela(meses);
-  const hoje = new Date();
 
   // Carrega estrutura do banco
   const [categoriasDb, mapeamentoAss, mapeamentoNetr] = await Promise.all([
@@ -282,7 +268,7 @@ export async function calcularDRE(
     const lancamentos = await buscarLancamentosCA(conta, de, ate);
 
     for (const lanc of lancamentos) {
-      const chaveMes = determinarMesLancamento(lanc, hoje);
+      const chaveMes = determinarMesLancamento(lanc);
       if (!chaveMes || !chaveMesesSet.has(chaveMes)) continue;
 
       const catId = mapeamento.get(lanc.categoria);

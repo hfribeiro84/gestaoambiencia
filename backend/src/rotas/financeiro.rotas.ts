@@ -198,8 +198,8 @@ rotasFinanceiro.get('/financeiro/debug/dre/:empresa/:mes/:ano', autenticar, asyn
   }
 
   const [receitas, despesas] = await Promise.all([
-    explorar('/v1/searchinstallmentstoreceivebyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '0', tamanhoPagina: '3' }),
-    explorar('/v1/searchinstallmentstopaybyfilter', { dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '0', tamanhoPagina: '3' }),
+    explorar('/v1/financeiro/eventos-financeiros/contas-a-receber/buscar', { data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '10' }),
+    explorar('/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar', { data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '10' }),
   ]);
 
   res.json({ de, ate, receitas, despesas });

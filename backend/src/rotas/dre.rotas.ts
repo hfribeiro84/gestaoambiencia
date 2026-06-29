@@ -1,12 +1,15 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { autenticar } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { calcularDRE } from '../modulos/financeiro/dreCalculo';
 import { buscarSaldoInicial, buscarTransferencias, buscarLancamentosCA, buscarLancamentosExtrato } from '../modulos/financeiro/dreContaAzul';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { criarCliente } from '../integracoes/claude';
-import type { EmpresaDRE, ItemExtrato, CategoriaCA } from '../modulos/financeiro/dreTypes';
+import type { EmpresaDRE, ItemExtrato, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
+
+const TIPOS_VALIDOS = new Set<TipoCategoria>(['receita', 'deducao', 'custo', 'despesa', 'financeiro', 'divisao']);
 
 export const rotasDre = Router();
 
@@ -38,6 +41,118 @@ rotasDre.get('/financeiro/dre/categorias', autenticar, async (_req: Request, res
       .order('ordem');
     if (error) throw new Error(error.message);
     res.json(data);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// POST /financeiro/dre/categorias — cria categoria/subcategoria
+// ──────────────────────────────────────────────────────────────
+rotasDre.post('/financeiro/dre/categorias', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { nome, pai_id, tipo, sinal } = req.body as {
+      nome?: string; pai_id?: string | null; tipo?: TipoCategoria; sinal?: number;
+    };
+
+    if (!nome?.trim() || !tipo || !TIPOS_VALIDOS.has(tipo) || (sinal !== 1 && sinal !== -1)) {
+      res.status(400).json({ erro: 'nome, tipo válido e sinal (1 ou -1) são obrigatórios.' });
+      return;
+    }
+
+    const paiId = pai_id || null;
+    const query = supabaseAdmin.from('dre_categoria').select('ordem');
+    const { data: irmaos } = paiId ? await query.eq('pai_id', paiId) : await query.is('pai_id', null);
+    const maxOrdem = (irmaos ?? []).reduce((m: number, r: { ordem: number }) => Math.max(m, r.ordem), 0);
+
+    const { data, error } = await supabaseAdmin
+      .from('dre_categoria')
+      .insert({ id: randomUUID(), nome: nome.trim(), pai_id: paiId, tipo, sinal, ordem: maxOrdem + 1 })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// PATCH /financeiro/dre/categorias/:id — edita nome/pai/tipo/sinal/ordem
+// ──────────────────────────────────────────────────────────────
+rotasDre.patch('/financeiro/dre/categorias/:id', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nome, pai_id, tipo, sinal, ordem } = req.body as {
+      nome?: string; pai_id?: string | null; tipo?: TipoCategoria; sinal?: number; ordem?: number;
+    };
+
+    if (pai_id === id) {
+      res.status(400).json({ erro: 'Uma categoria não pode ser pai de si mesma.' });
+      return;
+    }
+    if (tipo !== undefined && !TIPOS_VALIDOS.has(tipo)) {
+      res.status(400).json({ erro: 'Tipo inválido.' });
+      return;
+    }
+    if (sinal !== undefined && sinal !== 1 && sinal !== -1) {
+      res.status(400).json({ erro: 'Sinal deve ser 1 ou -1.' });
+      return;
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (nome !== undefined) patch.nome = nome.trim();
+    if (pai_id !== undefined) patch.pai_id = pai_id || null;
+    if (tipo !== undefined) patch.tipo = tipo;
+    if (sinal !== undefined) patch.sinal = sinal;
+    if (ordem !== undefined) patch.ordem = ordem;
+
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ erro: 'Nada para atualizar.' });
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('dre_categoria')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// DELETE /financeiro/dre/categorias/:id
+// ──────────────────────────────────────────────────────────────
+rotasDre.delete('/financeiro/dre/categorias/:id', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const { count: countFilhos } = await supabaseAdmin
+      .from('dre_categoria')
+      .select('id', { count: 'exact', head: true })
+      .eq('pai_id', id);
+    if ((countFilhos ?? 0) > 0) {
+      res.status(400).json({ erro: 'Mova ou exclua as subcategorias antes de excluir esta categoria.' });
+      return;
+    }
+
+    const { count: countMap } = await supabaseAdmin
+      .from('dre_mapeamento')
+      .select('id', { count: 'exact', head: true })
+      .eq('categoria_id', id);
+    if ((countMap ?? 0) > 0) {
+      res.status(400).json({ erro: `Existe(m) ${countMap} mapeamento(s) usando esta categoria. Remova-os primeiro.` });
+      return;
+    }
+
+    const { error } = await supabaseAdmin.from('dre_categoria').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

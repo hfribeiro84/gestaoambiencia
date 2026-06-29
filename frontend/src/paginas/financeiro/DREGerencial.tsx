@@ -57,6 +57,7 @@ interface DreCategoria {
   id: string;
   nome: string;
   pai_id: string | null;
+  ordem: number;
   tipo: TipoCategoria;
   sinal: number;
   subcategorias?: DreCategoria[];
@@ -355,6 +356,40 @@ export function DREGerencial() {
     }
   }
 
+  // ── CRUD da estrutura de categorias DRE ────────────────────────────────────
+  async function criarCategoria(dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) {
+    setErroConfig('');
+    try {
+      await api(`/api/financeiro/dre/categorias`, { method: 'POST', body: JSON.stringify(dados) });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function editarCategoria(id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) {
+    setErroConfig('');
+    try {
+      await api(`/api/financeiro/dre/categorias/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function excluirCategoria(id: string) {
+    setErroConfig('');
+    try {
+      await api(`/api/financeiro/dre/categorias/${id}`, { method: 'DELETE' });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
   // ── Toggle expansão subcategorias ──────────────────────────────────────────
   function toggleExpandido(id: string) {
     setExpandidos((prev) => {
@@ -480,6 +515,9 @@ export function DREGerencial() {
           onSetCategoriaId={setNovaCategoriaId}
           onAdicionar={adicionarMapeamento}
           onRemover={removerMapeamento}
+          onCriarCategoria={criarCategoria}
+          onEditarCategoria={editarCategoria}
+          onExcluirCategoria={excluirCategoria}
         />
       )}
     </div>
@@ -1043,10 +1081,6 @@ interface AbaExtratoProps {
 }
 
 function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empresa, onCarregar }: AbaExtratoProps) {
-  const receitas = extrato?.itens.filter((i) => i.tipo === 'receita') ?? [];
-  const despesas = extrato?.itens.filter((i) => i.tipo === 'despesa') ?? [];
-  const transferencias = extrato?.itens.filter((i) => i.tipo === 'transferencia') ?? [];
-
   return (
     <div>
       <div className="bg-white rounded-lg shadow p-4 mb-5 flex flex-wrap items-end gap-4">
@@ -1089,11 +1123,9 @@ function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empre
             <div className="text-xl font-bold text-blue-800">{formatBRL(extrato.saldoInicial)}</div>
           </div>
 
-          {receitas.length > 0 && <GrupoExtrato titulo="Receitas" itens={receitas} cor="green" />}
-          {despesas.length > 0 && <GrupoExtrato titulo="Despesas" itens={despesas} cor="red" />}
-          {transferencias.length > 0 && <GrupoExtrato titulo="Transferências" itens={transferencias} cor="gray" />}
-
-          {extrato.itens.length === 0 && (
+          {extrato.itens.length > 0 ? (
+            <TabelaExtrato itens={extrato.itens} />
+          ) : (
             <div className="text-sm text-gray-400 text-center py-6 bg-white rounded-lg shadow">
               Nenhum lançamento encontrado para o período.
             </div>
@@ -1121,29 +1153,42 @@ function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empre
   );
 }
 
-function GrupoExtrato({ titulo, itens, cor }: { titulo: string; itens: ItemExtrato[]; cor: 'green' | 'red' | 'gray' }) {
-  const corMap = {
-    green: { header: 'text-green-700', valor: 'text-green-700', bg: 'bg-green-50 border-green-200' },
-    red: { header: 'text-red-700', valor: 'text-red-600', bg: 'bg-red-50 border-red-200' },
-    gray: { header: 'text-gray-600', valor: 'text-gray-600', bg: 'bg-gray-50 border-gray-200' },
-  };
-  const c = corMap[cor];
+function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
   return (
-    <div className={`border rounded-lg overflow-hidden ${c.bg}`}>
-      <div className={`px-4 py-2 font-semibold text-sm ${c.header}`}>{titulo} ({itens.length})</div>
-      <div className="bg-white divide-y divide-gray-100">
-        {itens.map((item) => (
-          <div key={item.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
-            <div className="text-gray-400 w-20 shrink-0">
-              {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="truncate font-medium text-gray-800">{item.descricao || '(sem descrição)'}</div>
-              <div className="text-xs text-gray-400">{item.categoria}</div>
-            </div>
-            <div className={`font-medium shrink-0 ${c.valor}`}>{formatBRL(item.valor)}</div>
-          </div>
-        ))}
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+            <tr>
+              <th className="px-4 py-2 text-left w-20">Data</th>
+              <th className="px-4 py-2 text-left">Descrição</th>
+              <th className="px-4 py-2 text-left">Categoria</th>
+              <th className="px-4 py-2 text-right">Receita</th>
+              <th className="px-4 py-2 text-right">Despesa</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {itens.map((item) => {
+              // Transferências: classifica pelo sinal do valor; receita/despesa usam o tipo direto.
+              const ehReceita = item.tipo === 'receita' || (item.tipo === 'transferencia' && item.valor >= 0);
+              return (
+                <tr key={item.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
+                    {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
+                  </td>
+                  <td className="px-4 py-2 text-gray-800">{item.descricao || '(sem descrição)'}</td>
+                  <td className="px-4 py-2 text-gray-500">{item.categoria}</td>
+                  <td className="px-4 py-2 text-right text-green-700 font-medium">
+                    {ehReceita ? formatBRL(Math.abs(item.valor)) : ''}
+                  </td>
+                  <td className="px-4 py-2 text-right text-red-600 font-medium">
+                    {!ehReceita ? formatBRL(Math.abs(item.valor)) : ''}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -1214,6 +1259,30 @@ interface AbaConfiguracoesProps {
   onSetCategoriaId: (v: string) => void;
   onAdicionar: () => void;
   onRemover: (id: string) => void;
+  onCriarCategoria: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
+  onEditarCategoria: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onExcluirCategoria: (id: string) => Promise<void>;
+}
+
+// Reconstrói a árvore (pai_id) a partir da lista plana retornada pela API, ordenando por `ordem`.
+function construirArvoreCategorias(flat: DreCategoria[]): DreCategoria[] {
+  const mapa = new Map<string, DreCategoria>();
+  for (const c of flat) mapa.set(c.id, { ...c, subcategorias: [] });
+
+  const raizes: DreCategoria[] = [];
+  for (const c of flat) {
+    const node = mapa.get(c.id)!;
+    const pai = c.pai_id ? mapa.get(c.pai_id) : undefined;
+    if (pai) pai.subcategorias!.push(node);
+    else raizes.push(node);
+  }
+
+  function ordenar(nodes: DreCategoria[]) {
+    nodes.sort((a, b) => a.ordem - b.ordem);
+    for (const n of nodes) if (n.subcategorias?.length) ordenar(n.subcategorias);
+  }
+  ordenar(raizes);
+  return raizes;
 }
 
 // Hierarquia de categorias para o select — usa separadores visuais
@@ -1233,8 +1302,10 @@ function AbaConfiguracoes({
   empresa, categorias, mapeamentos, catsCA, carregando, carregandoCatsCA, erro,
   novoNomeCA, novaCategoriaId, salvando,
   onSetNomeCA, onSetCategoriaId, onAdicionar, onRemover,
+  onCriarCategoria, onEditarCategoria, onExcluirCategoria,
 }: AbaConfiguracoesProps) {
-  const catsPlanas = acharCategorias(categorias);
+  const arvoreCategorias = construirArvoreCategorias(categorias);
+  const catsPlanas = acharCategorias(arvoreCategorias);
   const nomesMapeados = new Set(mapeamentos.map((m) => m.nome_ca));
   const catsCAnaoMapeadas = catsCA.filter((c) => !nomesMapeados.has(c.nome));
 
@@ -1272,6 +1343,14 @@ function AbaConfiguracoes({
         Os mapeamentos são globais — valem para todos os meses e para o cálculo de qualquer período.
         {empresa === 'consolidado' && ' (Editando configurações da ASS; NETR tem configuração separada.)'}
       </div>
+
+      {/* Estrutura da DRE */}
+      <EstruturaDRE
+        arvore={arvoreCategorias}
+        onCriar={onCriarCategoria}
+        onEditar={onEditarCategoria}
+        onExcluir={onExcluirCategoria}
+      />
 
       {/* Diagnóstico CA */}
       <div className="bg-white rounded-lg shadow p-5">
@@ -1510,6 +1589,321 @@ function AbaConfiguracoes({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Estrutura da DRE (árvore de categorias editável) ──────────────────────────
+
+const TIPO_LABEL: Record<TipoCategoria, string> = {
+  receita: 'Receita', deducao: 'Dedução', custo: 'Custo', despesa: 'Despesa', financeiro: 'Financeiro', divisao: 'Divisão',
+};
+const TIPO_COR: Record<TipoCategoria, string> = {
+  receita: 'bg-green-100 text-green-700', deducao: 'bg-orange-100 text-orange-700', custo: 'bg-purple-100 text-purple-700',
+  despesa: 'bg-red-100 text-red-700', financeiro: 'bg-blue-100 text-blue-700', divisao: 'bg-gray-200 text-gray-700',
+};
+
+/** ids da própria categoria + todos os descendentes — evita criar ciclo ao mudar de pai. */
+function coletarIds(node: DreCategoria): Set<string> {
+  const ids = new Set<string>([node.id]);
+  function rec(n: DreCategoria) {
+    for (const s of n.subcategorias ?? []) { ids.add(s.id); rec(s); }
+  }
+  rec(node);
+  return ids;
+}
+
+interface EstruturaDREProps {
+  arvore: DreCategoria[];
+  onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
+  onEditar: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onExcluir: (id: string) => Promise<void>;
+}
+
+function EstruturaDRE({ arvore, onCriar, onEditar, onExcluir }: EstruturaDREProps) {
+  const [formAberto, setFormAberto] = useState<string | null>(null); // id do nó (ou '__raiz__') com formulário de subcategoria aberto
+  const [erro, setErro] = useState('');
+
+  const opcoesPai = acharCategorias(arvore);
+
+  async function mover(node: DreCategoria, irmaos: DreCategoria[], direcao: -1 | 1) {
+    const idx = irmaos.findIndex((s) => s.id === node.id);
+    const outro = irmaos[idx + direcao];
+    if (!outro) return;
+    setErro('');
+    try {
+      const ordemNode = node.ordem;
+      const ordemOutro = outro.ordem;
+      await onEditar(node.id, { ordem: ordemOutro });
+      await onEditar(outro.id, { ordem: ordemNode });
+    } catch (e) {
+      setErro((e as Error).message);
+    }
+  }
+
+  async function excluir(node: DreCategoria) {
+    if ((node.subcategorias?.length ?? 0) > 0) {
+      setErro('Mova ou exclua as subcategorias antes de excluir esta categoria.');
+      return;
+    }
+    if (!window.confirm(`Excluir a categoria "${node.nome}"?`)) return;
+    setErro('');
+    try {
+      await onExcluir(node.id);
+    } catch (e) {
+      setErro((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-5">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold">Estrutura da DRE</h2>
+        <button
+          onClick={() => setFormAberto(formAberto === '__raiz__' ? null : '__raiz__')}
+          className="text-xs text-slate-700 hover:underline border border-slate-300 px-3 py-1 rounded"
+        >
+          + Categoria de nível raiz
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mb-3">
+        Esta é a estrutura que aparece na aba DRE. Edite o nome clicando nele, reordene com as setas,
+        mude o nível pelo seletor "pai" e adicione ou exclua categorias e subcategorias.
+      </p>
+
+      {erro && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">{erro}</div>}
+
+      {formAberto === '__raiz__' && (
+        <FormNovaCategoria
+          paiId={null}
+          tipoDefault="despesa"
+          sinalDefault={-1}
+          onCriar={onCriar}
+          onFechar={() => setFormAberto(null)}
+        />
+      )}
+
+      <div className="border rounded-lg divide-y divide-gray-100">
+        {arvore.length === 0 && (
+          <div className="text-sm text-gray-400 text-center py-6">Nenhuma categoria cadastrada.</div>
+        )}
+        {arvore.map((node) => (
+          <NodoCategoria
+            key={node.id}
+            node={node}
+            nivel={0}
+            irmaos={arvore}
+            opcoesPai={opcoesPai}
+            formAberto={formAberto}
+            setFormAberto={setFormAberto}
+            onMover={mover}
+            onEditar={onEditar}
+            onExcluir={excluir}
+            onCriar={onCriar}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface NodoCategoriaProps {
+  node: DreCategoria;
+  nivel: number;
+  irmaos: DreCategoria[];
+  opcoesPai: Array<{ id: string; label: string; nivel: number }>;
+  formAberto: string | null;
+  setFormAberto: (id: string | null) => void;
+  onMover: (node: DreCategoria, irmaos: DreCategoria[], direcao: -1 | 1) => void;
+  onEditar: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onExcluir: (node: DreCategoria) => void;
+  onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
+}
+
+function NodoCategoria({
+  node, nivel, irmaos, opcoesPai, formAberto, setFormAberto, onMover, onEditar, onExcluir, onCriar,
+}: NodoCategoriaProps) {
+  const [editando, setEditando] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState(node.nome);
+
+  const idx = irmaos.findIndex((s) => s.id === node.id);
+  const ehPrimeiro = idx === 0;
+  const ehUltimo = idx === irmaos.length - 1;
+  const idsExcluidos = coletarIds(node);
+
+  async function salvarNome() {
+    setEditando(false);
+    const nomeLimpo = nomeEdit.trim();
+    if (!nomeLimpo || nomeLimpo === node.nome) {
+      setNomeEdit(node.nome);
+      return;
+    }
+    await onEditar(node.id, { nome: nomeLimpo });
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50" style={{ paddingLeft: 8 + nivel * 22 }}>
+        <div className="flex flex-col shrink-0">
+          <button
+            onClick={() => onMover(node, irmaos, -1)}
+            disabled={ehPrimeiro}
+            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]"
+          >▲</button>
+          <button
+            onClick={() => onMover(node, irmaos, 1)}
+            disabled={ehUltimo}
+            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]"
+          >▼</button>
+        </div>
+
+        {editando ? (
+          <input
+            value={nomeEdit}
+            onChange={(e) => setNomeEdit(e.target.value)}
+            onBlur={salvarNome}
+            onKeyDown={(e) => { if (e.key === 'Enter') salvarNome(); if (e.key === 'Escape') { setNomeEdit(node.nome); setEditando(false); } }}
+            autoFocus
+            className="flex-1 min-w-[120px] border rounded px-2 py-1 text-sm"
+          />
+        ) : (
+          <span
+            onClick={() => setEditando(true)}
+            title="Clique para editar"
+            className="flex-1 min-w-[120px] cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm text-gray-800"
+          >
+            {node.nome}
+          </span>
+        )}
+
+        <select
+          value={node.tipo}
+          onChange={(e) => onEditar(node.id, { tipo: e.target.value as TipoCategoria })}
+          className={`text-xs rounded px-1.5 py-1 border-none shrink-0 ${TIPO_COR[node.tipo]}`}
+        >
+          {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
+            <option key={t} value={t}>{TIPO_LABEL[t]}</option>
+          ))}
+        </select>
+
+        <select
+          value={node.sinal}
+          onChange={(e) => onEditar(node.id, { sinal: Number(e.target.value) })}
+          className="text-xs border rounded px-1.5 py-1 shrink-0 w-12"
+        >
+          <option value={1}>+</option>
+          <option value={-1}>−</option>
+        </select>
+
+        <select
+          value={node.pai_id ?? ''}
+          onChange={(e) => onEditar(node.id, { pai_id: e.target.value || null })}
+          className="text-xs border rounded px-1.5 py-1 shrink-0 max-w-[180px]"
+          title="Mudar nível (categoria pai)"
+        >
+          <option value="">— Nível raiz —</option>
+          {opcoesPai.filter((o) => !idsExcluidos.has(o.id)).map((o) => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+
+        <button
+          onClick={() => setFormAberto(formAberto === node.id ? null : node.id)}
+          className="text-xs text-slate-600 hover:underline shrink-0"
+        >
+          + Sub
+        </button>
+        <button
+          onClick={() => onExcluir(node)}
+          className="text-xs text-red-400 hover:text-red-600 shrink-0"
+        >
+          Excluir
+        </button>
+      </div>
+
+      {formAberto === node.id && (
+        <div style={{ paddingLeft: 8 + (nivel + 1) * 22 }}>
+          <FormNovaCategoria
+            paiId={node.id}
+            tipoDefault={node.tipo}
+            sinalDefault={node.sinal}
+            onCriar={onCriar}
+            onFechar={() => setFormAberto(null)}
+          />
+        </div>
+      )}
+
+      {(node.subcategorias ?? []).map((sub) => (
+        <NodoCategoria
+          key={sub.id}
+          node={sub}
+          nivel={nivel + 1}
+          irmaos={node.subcategorias!}
+          opcoesPai={opcoesPai}
+          formAberto={formAberto}
+          setFormAberto={setFormAberto}
+          onMover={onMover}
+          onEditar={onEditar}
+          onExcluir={onExcluir}
+          onCriar={onCriar}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface FormNovaCategoriaProps {
+  paiId: string | null;
+  tipoDefault: TipoCategoria;
+  sinalDefault: number;
+  onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
+  onFechar: () => void;
+}
+
+function FormNovaCategoria({ paiId, tipoDefault, sinalDefault, onCriar, onFechar }: FormNovaCategoriaProps) {
+  const [nome, setNome] = useState('');
+  const [tipo, setTipo] = useState<TipoCategoria>(tipoDefault);
+  const [sinal, setSinal] = useState(sinalDefault);
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    if (!nome.trim()) return;
+    setSalvando(true);
+    try {
+      await onCriar({ nome: nome.trim(), pai_id: paiId, tipo, sinal });
+      onFechar();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 py-2 px-2 bg-slate-50 border-y border-slate-200">
+      <input
+        value={nome}
+        onChange={(e) => setNome(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && salvar()}
+        placeholder="Nome da categoria"
+        autoFocus
+        className="flex-1 min-w-[160px] border rounded px-2 py-1 text-sm"
+      />
+      <select value={tipo} onChange={(e) => setTipo(e.target.value as TipoCategoria)} className="text-xs border rounded px-1.5 py-1">
+        {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
+          <option key={t} value={t}>{TIPO_LABEL[t]}</option>
+        ))}
+      </select>
+      <select value={sinal} onChange={(e) => setSinal(Number(e.target.value))} className="text-xs border rounded px-1.5 py-1 w-12">
+        <option value={1}>+</option>
+        <option value={-1}>−</option>
+      </select>
+      <button
+        onClick={salvar}
+        disabled={salvando || !nome.trim()}
+        className="bg-slate-800 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50 hover:bg-slate-700"
+      >
+        {salvando ? 'Salvando...' : 'Adicionar'}
+      </button>
+      <button onClick={onFechar} className="text-xs text-gray-400 hover:text-gray-600">Cancelar</button>
     </div>
   );
 }

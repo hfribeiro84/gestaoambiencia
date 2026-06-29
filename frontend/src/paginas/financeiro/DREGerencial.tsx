@@ -1238,21 +1238,21 @@ function AbaConfiguracoes({
   const nomesMapeados = new Set(mapeamentos.map((m) => m.nome_ca));
   const catsCAnaoMapeadas = catsCA.filter((c) => !nomesMapeados.has(c.nome));
 
+  const hoje = new Date();
   const [diag, setDiag] = useState<Record<string, unknown> | null>(null);
   const [diagCarregando, setDiagCarregando] = useState(false);
   const [diagErro, setDiagErro] = useState('');
+  const [diagMes, setDiagMes] = useState(hoje.getMonth() + 1);
+  const [diagAno, setDiagAno] = useState(hoje.getFullYear());
 
   async function diagnosticar() {
     const emp = empresa === 'consolidado' ? 'ass' : empresa;
-    const hoje = new Date();
-    const mes = hoje.getMonth() + 1;
-    const ano = hoje.getFullYear();
     setDiagCarregando(true);
     setDiagErro('');
     setDiag(null);
     try {
       const resultado = await api<Record<string, unknown>>(
-        `/api/financeiro/dre/debug/raw/${emp}/${mes}/${ano}`
+        `/api/financeiro/dre/debug/raw/${emp}/${diagMes}/${diagAno}`
       );
       setDiag(resultado);
     } catch (e) {
@@ -1275,10 +1275,23 @@ function AbaConfiguracoes({
 
       {/* Diagnóstico CA */}
       <div className="bg-white rounded-lg shadow p-5">
-        <div className="flex items-center justify-between mb-2">
+        <h2 className="text-base font-semibold mb-1">Diagnóstico Conta Azul</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Verifique se o CA retorna lançamentos para um período que você sabe que tem dados cadastrados.
+        </p>
+
+        <div className="flex flex-wrap items-end gap-3 mb-3">
           <div>
-            <h2 className="text-base font-semibold">Diagnóstico Conta Azul</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Verifica se o CA está retornando dados para o mês atual.</p>
+            <label className="block text-xs text-gray-500 mb-1">Mês</label>
+            <select value={diagMes} onChange={(e) => setDiagMes(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+              {MESES_COMPLETOS.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Ano</label>
+            <select value={diagAno} onChange={(e) => setDiagAno(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+              {ANOS.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
           </div>
           <button
             onClick={diagnosticar}
@@ -1291,7 +1304,7 @@ function AbaConfiguracoes({
 
         {diagErro && (
           <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-            ❌ {diagErro}
+            ❌ Erro de comunicação: {diagErro}
           </div>
         )}
 
@@ -1306,7 +1319,7 @@ function AbaConfiguracoes({
               if (Array.isArray(d[chave])) return { chave, quantidade: (d[chave] as unknown[]).length };
             }
             if (Array.isArray(corpo)) return { chave: '(array direto)', quantidade: (corpo as unknown[]).length };
-            return { chave: '(nenhum array encontrado)', quantidade: 0 };
+            return null;
           }
 
           const infoRec = contarItens(rec?.corpo);
@@ -1314,45 +1327,67 @@ function AbaConfiguracoes({
           const statusRec = rec?.status;
           const statusDesp = desp?.status;
 
+          // 404 no CA = sem registros no período (comportamento normal da API)
+          const semDadosRec = statusRec === 404 || (infoRec?.quantidade ?? 0) === 0;
+          const semDadosDesp = statusDesp === 404 || (infoDesp?.quantidade ?? 0) === 0;
+          const okRec = statusRec === 200 && (infoRec?.quantidade ?? 0) > 0;
+          const okDesp = statusDesp === 200 && (infoDesp?.quantidade ?? 0) > 0;
+
           return (
-            <div className="mt-3 space-y-2 text-sm">
-              <div className={`flex items-center gap-3 p-3 rounded border ${statusRec === 200 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg">{statusRec === 200 ? '✅' : '❌'}</span>
+            <div className="space-y-2 text-sm">
+              {/* Receitas */}
+              <div className={`flex items-start gap-3 p-3 rounded border ${okRec ? 'bg-green-50 border-green-200' : semDadosRec ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
+                <span className="text-lg mt-0.5">{okRec ? '✅' : semDadosRec ? '⚠️' : '❌'}</span>
                 <div>
-                  <div className="font-medium">Receitas — HTTP {statusRec}</div>
-                  {infoRec && (
-                    <div className="text-xs text-gray-600">
-                      Campo: <code className="bg-gray-100 px-1 rounded">{infoRec.chave}</code> · {infoRec.quantidade} item(s) na amostra
+                  <div className="font-medium">
+                    Receitas — {okRec ? `${infoRec!.quantidade} item(s) encontrado(s)` : semDadosRec ? 'Sem lançamentos neste período' : `Erro HTTP ${statusRec}`}
+                  </div>
+                  {semDadosRec && statusRec === 404 && (
+                    <div className="text-xs text-yellow-700 mt-0.5">
+                      HTTP 404 = período sem registros no CA. Tente outro mês que tenha receitas cadastradas.
+                    </div>
+                  )}
+                  {okRec && infoRec && (
+                    <div className="text-xs text-gray-600 mt-0.5">
+                      Formato reconhecido: campo <code className="bg-white px-1 rounded border">{infoRec.chave}</code>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className={`flex items-center gap-3 p-3 rounded border ${statusDesp === 200 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg">{statusDesp === 200 ? '✅' : '❌'}</span>
+              {/* Despesas */}
+              <div className={`flex items-start gap-3 p-3 rounded border ${okDesp ? 'bg-green-50 border-green-200' : semDadosDesp ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
+                <span className="text-lg mt-0.5">{okDesp ? '✅' : semDadosDesp ? '⚠️' : '❌'}</span>
                 <div>
-                  <div className="font-medium">Despesas — HTTP {statusDesp}</div>
-                  {infoDesp && (
-                    <div className="text-xs text-gray-600">
-                      Campo: <code className="bg-gray-100 px-1 rounded">{infoDesp.chave}</code> · {infoDesp.quantidade} item(s) na amostra
+                  <div className="font-medium">
+                    Despesas — {okDesp ? `${infoDesp!.quantidade} item(s) encontrado(s)` : semDadosDesp ? 'Sem lançamentos neste período' : `Erro HTTP ${statusDesp}`}
+                  </div>
+                  {semDadosDesp && statusDesp === 404 && (
+                    <div className="text-xs text-yellow-700 mt-0.5">
+                      HTTP 404 = período sem registros no CA. Tente outro mês que tenha despesas cadastradas.
+                    </div>
+                  )}
+                  {okDesp && infoDesp && (
+                    <div className="text-xs text-gray-600 mt-0.5">
+                      Formato reconhecido: campo <code className="bg-white px-1 rounded border">{infoDesp.chave}</code>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Mostra as chaves do primeiro item para diagnóstico de campo */}
+              {/* Campos do primeiro item quando há dados */}
               {infoRec && infoRec.quantidade > 0 && (() => {
                 const d = rec.corpo as Record<string, unknown>;
-                const arr = (d[infoRec.chave] ?? d) as Record<string, unknown>[];
+                const arr = (Array.isArray(d[infoRec.chave]) ? d[infoRec.chave] : d) as Record<string, unknown>[];
                 const primeiro = arr[0] ?? {};
                 const chaves = Object.keys(primeiro);
                 return (
                   <div className="p-3 bg-gray-50 border border-gray-200 rounded text-xs">
                     <div className="font-medium text-gray-600 mb-1">Campos do primeiro item de receita:</div>
                     <div className="font-mono text-gray-500 break-all">{chaves.join(' · ')}</div>
-                    {primeiro.valor !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valor</b> encontrado: {String(primeiro.valor)}</div>}
-                    {primeiro.valorTotal !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valorTotal</b> encontrado: {String(primeiro.valorTotal)}</div>}
-                    {primeiro.categoria !== undefined && <div className="mt-1 text-green-700">✓ campo <b>categoria</b> encontrado: {JSON.stringify(primeiro.categoria)}</div>}
+                    {primeiro.valor !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valor</b>: {String(primeiro.valor)}</div>}
+                    {primeiro.valorTotal !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valorTotal</b>: {String(primeiro.valorTotal)}</div>}
+                    {primeiro.categoria !== undefined && <div className="mt-1 text-green-700">✓ campo <b>categoria</b>: {JSON.stringify(primeiro.categoria)}</div>}
                   </div>
                 );
               })()}

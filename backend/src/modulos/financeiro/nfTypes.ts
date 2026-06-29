@@ -20,7 +20,7 @@ export interface NfEmitida {
   descricao?: string;
 }
 
-export type StatusConferencia = 'conferido' | 'pendente' | 'nao_esperada';
+export type StatusConferencia = 'conferido' | 'conferido_diferenca' | 'pendente' | 'nao_esperada';
 
 export interface ItemConferencia {
   status: StatusConferencia;
@@ -36,6 +36,7 @@ export interface ResultadoConferencia {
   totalPlanilha: number;
   totalContaAzul: number;
   conferidos: number;
+  conferidosDiferenca: number;
   pendentes: number;
   naoEsperadas: number;
   itens: ItemConferencia[];

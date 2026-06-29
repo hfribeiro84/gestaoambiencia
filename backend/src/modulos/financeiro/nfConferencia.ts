@@ -71,7 +71,9 @@ export function conferirNfs(
     const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
     if (match) {
       matchados.add(match.id);
-      itens.push({ status: 'conferido', planilha: nfP, contaAzul: match });
+      // Verifica se os valores batem dentro da tolerância de R$1,00
+      const valorOk = valorProximo(match.valor, vliq(nfP, aliquotaISS));
+      itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: match });
     } else {
       itens.push({ status: 'pendente', planilha: nfP });
     }
@@ -106,6 +108,7 @@ export function calcularResultado(
     totalPlanilha: planilha.length,
     totalContaAzul: contaAzul.length,
     conferidos: itens.filter((i) => i.status === 'conferido').length,
+    conferidosDiferenca: itens.filter((i) => i.status === 'conferido_diferenca').length,
     pendentes: itens.filter((i) => i.status === 'pendente').length,
     naoEsperadas: itens.filter((i) => i.status === 'nao_esperada').length,
     itens,

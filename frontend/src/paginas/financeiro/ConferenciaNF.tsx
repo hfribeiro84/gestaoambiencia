@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 
 type Empresa = 'ass' | 'netr';
-type StatusConferencia = 'conferido' | 'pendente' | 'nao_esperada';
+type StatusConferencia = 'conferido' | 'conferido_diferenca' | 'pendente' | 'nao_esperada';
 
 interface NfPlanilha {
   emissaoNF: string;
@@ -38,6 +38,7 @@ interface ResultadoConferencia {
   totalPlanilha: number;
   totalContaAzul: number;
   conferidos: number;
+  conferidosDiferenca: number;
   pendentes: number;
   naoEsperadas: number;
   itens: ItemConferencia[];
@@ -59,14 +60,16 @@ const ANOS = [anoAtual - 1, anoAtual, anoAtual + 1];
 
 const COR_STATUS: Record<StatusConferencia, string> = {
   conferido: 'text-green-700 bg-green-50',
+  conferido_diferenca: 'text-orange-700 bg-orange-50',
   pendente: 'text-red-700 bg-red-50',
   nao_esperada: 'text-yellow-700 bg-yellow-50',
 };
 
 const LABEL_STATUS: Record<StatusConferencia, string> = {
   conferido: '✅ Conferido',
+  conferido_diferenca: '⚠️ Divergência',
   pendente: '❌ Pendente',
-  nao_esperada: '⚠️ Não prevista',
+  nao_esperada: '🔵 Não prevista',
 };
 
 function formatBRL(valor: number): string {
@@ -165,12 +168,10 @@ export function ConferenciaNF() {
       setResultadoEm(new Date().toISOString());
       setFiltro('todos');
       setModoSubstituir(false);
-      if (!r.erroSalvar) {
-        setPlanilhaSalva((prev) => prev
-          ? { ...prev, totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS }
-          : { totalItens: r.totalPlanilha, aliquotaISS: r.aliquotaISS, atualizado_em: new Date().toISOString() }
-        );
-      }
+      setNomeArquivo('');
+      setCsvContent('');
+      // Recarrega do servidor para obter a data de atualização real do banco
+      if (!r.erroSalvar) carregarInfo();
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -196,7 +197,9 @@ export function ConferenciaNF() {
   }
 
   const itensFiltrados = resultado
-    ? filtro === 'todos' ? resultado.itens : resultado.itens.filter((i) => i.status === filtro)
+    ? filtro === 'todos'
+      ? resultado.itens
+      : resultado.itens.filter((i) => i.status === filtro)
     : [];
 
   const aliquotaEfetiva = resultado?.aliquotaISS ?? aliquotaISS;
@@ -364,11 +367,12 @@ export function ConferenciaNF() {
             const totalValorCa = resultado.itens.reduce((s, i) => s + (i.contaAzul?.valor ?? 0), 0);
             return (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-3">
                   {[
                     { label: 'Na planilha', valor: resultado.totalPlanilha, cor: 'bg-gray-50 text-gray-700' },
                     { label: 'No Conta Azul', valor: resultado.totalContaAzul, cor: 'bg-blue-50 text-blue-700' },
                     { label: 'Conferidos', valor: resultado.conferidos, cor: 'bg-green-50 text-green-700' },
+                    { label: 'Com divergência', valor: resultado.conferidosDiferenca ?? 0, cor: 'bg-orange-50 text-orange-700' },
                     { label: 'Pendentes', valor: resultado.pendentes, cor: 'bg-red-50 text-red-700' },
                     { label: 'Não previstas', valor: resultado.naoEsperadas, cor: 'bg-yellow-50 text-yellow-700' },
                   ].map((c) => (
@@ -394,7 +398,7 @@ export function ConferenciaNF() {
 
           {/* Filtros */}
           <div className="flex gap-2 mb-4 flex-wrap">
-            {(['todos', 'conferido', 'pendente', 'nao_esperada'] as const).map((f) => (
+            {(['todos', 'conferido', 'conferido_diferenca', 'pendente', 'nao_esperada'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFiltro(f)}
@@ -425,7 +429,8 @@ export function ConferenciaNF() {
                   const vliq = item.planilha
                     ? valorLiquido(item.planilha, aliquotaEfetiva)
                     : null;
-                  const diferenca = item.status === 'conferido' && vliq !== null
+                  const temMatch = item.status === 'conferido' || item.status === 'conferido_diferenca';
+                  const diferenca = temMatch && vliq !== null
                     ? (item.contaAzul?.valor ?? 0) - vliq
                     : null;
                   const temIss = item.planilha?.retencaoISS && aliquotaEfetiva > 0;

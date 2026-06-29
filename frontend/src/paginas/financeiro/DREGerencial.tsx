@@ -217,6 +217,16 @@ export function DREGerencial() {
     }
   }
 
+  // ── Excluir snapshot ──────────────────────────────────────────────────────
+  async function excluirSnapshot(id: string) {
+    try {
+      await api(`/api/financeiro/dre/snapshots/${empresa}/${id}`, { method: 'DELETE' });
+      setSnapshots((prev) => prev.filter((s) => s.id !== id));
+    } catch (e) {
+      console.error('Erro ao excluir snapshot:', e);
+    }
+  }
+
   // ── Carregar histórico ─────────────────────────────────────────────────────
   const carregarHistorico = useCallback(async () => {
     setCarregandoHistorico(true);
@@ -382,6 +392,7 @@ export function DREGerencial() {
         <AbaHistorico
           snapshots={snapshots}
           carregando={carregandoHistorico}
+          onExcluir={excluirSnapshot}
         />
       )}
 
@@ -912,13 +923,11 @@ function GrupoExtrato({ titulo, itens, cor }: { titulo: string; itens: ItemExtra
 interface AbaHistoricoProps {
   snapshots: SnapshotInfo[];
   carregando: boolean;
+  onExcluir: (id: string) => void;
 }
 
-function AbaHistorico({ snapshots, carregando }: AbaHistoricoProps) {
-  // Para o gráfico precisamos dos dados completos — aqui usamos apenas os SnapshotInfo
-  // O gráfico SVG simples mostrará os snapshots no eixo X, mas sem os valores financeiros
-  // (pois SnapshotInfo não os carrega). Mostramos só a tabela neste caso.
-  // Se quiser gráfico completo, seria necessário um endpoint adicional ou carregar cada snapshot.
+function AbaHistorico({ snapshots, carregando, onExcluir }: AbaHistoricoProps) {
+  const [confirmando, setConfirmando] = useState<string | null>(null);
 
   if (carregando) {
     return <div className="text-sm text-gray-400 py-8 text-center">Carregando histórico...</div>;
@@ -929,26 +938,50 @@ function AbaHistorico({ snapshots, carregando }: AbaHistoricoProps) {
   }
 
   return (
-    <div>
-      {/* Tabela de snapshots */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
-            <tr>
-              <th className="px-4 py-3 text-left">Data de atualização</th>
-              <th className="px-4 py-3 text-left">Mês / Ano ref.</th>
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+          <tr>
+            <th className="px-4 py-3 text-left">Data de atualização</th>
+            <th className="px-4 py-3 text-left">Mês / Ano ref.</th>
+            <th className="px-4 py-3 text-right">Ação</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {snapshots.map((s) => (
+            <tr key={s.id} className="hover:bg-gray-50">
+              <td className="px-4 py-3 text-gray-600">{formatDataHora(s.calculado_em)}</td>
+              <td className="px-4 py-3 font-medium">{nomeMes(s.mes_ref, s.ano_ref)}</td>
+              <td className="px-4 py-3 text-right">
+                {confirmando === s.id ? (
+                  <span className="flex items-center justify-end gap-2">
+                    <span className="text-xs text-gray-500">Excluir?</span>
+                    <button
+                      onClick={() => { onExcluir(s.id); setConfirmando(null); }}
+                      className="text-xs text-red-600 font-medium hover:underline"
+                    >
+                      Sim
+                    </button>
+                    <button
+                      onClick={() => setConfirmando(null)}
+                      className="text-xs text-gray-400 hover:underline"
+                    >
+                      Não
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setConfirmando(s.id)}
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    Excluir
+                  </button>
+                )}
+              </td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {snapshots.map((s) => (
-              <tr key={s.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-gray-600">{formatDataHora(s.calculado_em)}</td>
-                <td className="px-4 py-3 font-medium">{nomeMes(s.mes_ref, s.ano_ref)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

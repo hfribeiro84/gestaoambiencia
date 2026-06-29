@@ -185,6 +185,24 @@ rotasDre.get('/financeiro/dre/snapshots/:empresa', autenticar, async (req: Reque
 });
 
 // ──────────────────────────────────────────────────────────────
+// DELETE /financeiro/dre/snapshots/:empresa/:id
+// ──────────────────────────────────────────────────────────────
+rotasDre.delete('/financeiro/dre/snapshots/:empresa/:id', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa, id } = req.params;
+    const { error } = await supabaseAdmin
+      .from('dre_snapshot')
+      .delete()
+      .eq('id', id)
+      .eq('empresa', empresa);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
 // GET /financeiro/dre/extrato/:empresa/:mes/:ano
 // ──────────────────────────────────────────────────────────────
 rotasDre.get('/financeiro/dre/extrato/:empresa/:mes/:ano', autenticar, async (req: Request, res: Response) => {

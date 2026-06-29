@@ -62,7 +62,12 @@ export function parseCsvAss(csv: string): NfPlanilha[] {
   const resultado: NfPlanilha[] = [];
 
   for (const row of dados) {
-    const cliente = colCliente >= 0 ? (row[colCliente] ?? '').trim() : '';
+    const organizacao = colCliente >= 0 ? (row[colCliente] ?? '').trim() : '';
+    const projeto = colProjeto >= 0 ? (row[colProjeto] ?? '').trim() : '';
+
+    // Quando Organização está vazia, usa Projeto como nome do cliente
+    // (casos onde o tomador é identificado só pelo projeto, ex: PJ282-1, A.M.B)
+    const cliente = organizacao || projeto;
     if (!cliente) continue;
 
     const valorRec = parseBRL(colRec >= 0 ? (row[colRec] ?? '') : '');
@@ -73,7 +78,8 @@ export function parseCsvAss(csv: string): NfPlanilha[] {
     resultado.push({
       emissaoNF: colEmissao >= 0 ? (row[colEmissao] ?? '').trim().toUpperCase() : '',
       cliente,
-      descricao: colProjeto >= 0 ? (row[colProjeto] ?? '').trim() : '',
+      // Se Organização estava vazia, o projeto já virou cliente — descricao fica vazio
+      descricao: organizacao ? projeto : '',
       valorTotal,
       retencaoISS: (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM',
     });

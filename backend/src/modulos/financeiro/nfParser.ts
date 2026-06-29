@@ -105,7 +105,11 @@ export function parseCsvNetr(csv: string): NfPlanilha[] {
 
   const dados = linhas.slice(headerIdx + 1);
 
-  // Corporativo: agrupado por CNPJ → 1 NF por CNPJ com soma dos valores
+  // Faturamento "Corporativo" e "Consultoria": 1 NF única para todas as unidades,
+  // agrupada pelo CNPJ de Faturamento (soma dos valores). "Unidade": 1 NF por linha.
+  const ehAgrupado = (f: string) => f === 'corporativo' || f === 'consultoria';
+
+  // Agrupado por CNPJ → 1 NF por CNPJ com soma dos valores
   type GrupoCorp = {
     emissaoNF: string;
     empresas: Set<string>;
@@ -131,7 +135,7 @@ export function parseCsvNetr(csv: string): NfPlanilha[] {
     const unidade     = colUnidade >= 0 ? (row[colUnidade] ?? '').trim() : '';
     const retencaoISS = (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM';
 
-    if (faturamento === 'corporativo') {
+    if (ehAgrupado(faturamento)) {
       if (!cnpj) continue;
       if (!gruposCorp.has(cnpj)) {
         gruposCorp.set(cnpj, { emissaoNF: '', empresas: new Set(), nUnidades: 0, valorTotal: 0, retencaoISS: false });

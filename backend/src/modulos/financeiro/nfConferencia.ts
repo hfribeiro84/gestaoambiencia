@@ -36,6 +36,13 @@ function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number):
   return valorProximo(ca.valor, vliq(planilha, aliquotaISS));
 }
 
+/** Item casou, mas o CNPJ da planilha difere do CNPJ da NF → cadastro a corrigir. */
+function cnpjDivergente(planilha: NfPlanilha, ca: NfEmitida): boolean {
+  const cnpjP = normCnpj(planilha.cnpj ?? '');
+  const cnpjC = normCnpj(ca.cnpj ?? '');
+  return cnpjP.length > 0 && cnpjC.length > 0 && cnpjP !== cnpjC;
+}
+
 /**
  * Verifica se o campo da planilha bate com o nome_cliente do CA.
  * O CA pode ter "Projeto - Razão Social", então CA pode CONTER o projeto.
@@ -120,6 +127,7 @@ export function conferirNfs(
       planilha: nfP,
       contaAzul: ca,
       associacaoManual: true,
+      cnpjDivergente: cnpjDivergente(nfP, ca) || undefined,
     });
   }
 
@@ -141,7 +149,12 @@ export function conferirNfs(
   for (const { i, ca } of conferidos) {
     const nfP = planilha[i];
     const valorOk = valorProximo(ca.valor, vliq(nfP, aliquotaISS));
-    itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: ca });
+    itens.push({
+      status: valorOk ? 'conferido' : 'conferido_diferenca',
+      planilha: nfP,
+      contaAzul: ca,
+      cnpjDivergente: cnpjDivergente(nfP, ca) || undefined,
+    });
   }
 
   // 3. Itens da planilha que sobraram → pendentes.
@@ -170,7 +183,7 @@ export function calcularResultado(
   erroSalvar?: string,
   associacoesManuais: AssociacaoManual[] = [],
 ): ResultadoConferencia {
-  const itens = erroApi
+  const itens: ItemConferencia[] = erroApi
     ? planilha.map((p) => ({ status: 'pendente' as const, planilha: p }))
     : conferirNfs(empresa, planilha, contaAzul, aliquotaISS, associacoesManuais);
 
@@ -183,6 +196,7 @@ export function calcularResultado(
     conferidosDiferenca: itens.filter((i) => i.status === 'conferido_diferenca').length,
     pendentes: itens.filter((i) => i.status === 'pendente').length,
     naoEsperadas: itens.filter((i) => i.status === 'nao_esperada').length,
+    cnpjDivergentes: itens.filter((i) => i.cnpjDivergente).length,
     itens,
     erroApi,
     erroSalvar,

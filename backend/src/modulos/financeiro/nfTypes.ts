@@ -27,6 +27,9 @@ export interface ItemConferencia {
   planilha?: NfPlanilha;
   contaAzul?: NfEmitida;
   associacaoManual?: boolean;
+  // Casou (por código/nome ou manualmente), mas o CNPJ da planilha difere do CNPJ
+  // da NF no Conta Azul → erro de cadastro a corrigir (NETR).
+  cnpjDivergente?: boolean;
 }
 
 export interface AssociacaoManual {
@@ -53,6 +56,7 @@ export interface ResultadoConferencia {
   conferidosDiferenca: number;
   pendentes: number;
   naoEsperadas: number;
+  cnpjDivergentes: number;
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;

@@ -29,6 +29,7 @@ interface ItemConferencia {
   planilha?: NfPlanilha;
   contaAzul?: NfEmitida;
   associacaoManual?: boolean;
+  cnpjDivergente?: boolean;
 }
 
 interface ResultadoConferencia {
@@ -42,6 +43,7 @@ interface ResultadoConferencia {
   conferidosDiferenca: number;
   pendentes: number;
   naoEsperadas: number;
+  cnpjDivergentes?: number;
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;
@@ -346,7 +348,7 @@ export function ConferenciaNF() {
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
   const [resultadoEm, setResultadoEm] = useState<string | null>(null);
   const [erro, setErro] = useState('');
-  const [filtro, setFiltro] = useState<StatusConferencia | 'todos'>('todos');
+  const [filtro, setFiltro] = useState<StatusConferencia | 'todos' | 'cnpj_divergente'>('todos');
 
   // Modal de associação
   const [modoAssociacao, setModoAssociacao] = useState<ModoAssociacao | null>(null);
@@ -447,8 +449,12 @@ export function ConferenciaNF() {
   const itensFiltrados = resultado
     ? filtro === 'todos'
       ? resultado.itens
-      : resultado.itens.filter((i) => i.status === filtro)
+      : filtro === 'cnpj_divergente'
+        ? resultado.itens.filter((i) => i.cnpjDivergente)
+        : resultado.itens.filter((i) => i.status === filtro)
     : [];
+
+  const totalCnpjDivergente = resultado?.itens.filter((i) => i.cnpjDivergente).length ?? 0;
 
   const aliquotaEfetiva = resultado?.aliquotaISS ?? aliquotaISS;
 
@@ -671,6 +677,16 @@ export function ConferenciaNF() {
                 {f === 'todos' ? `Todos (${resultado.itens.length})` : LABEL_STATUS[f]}
               </button>
             ))}
+            {totalCnpjDivergente > 0 && (
+              <button
+                onClick={() => setFiltro('cnpj_divergente')}
+                className={`px-3 py-1 rounded text-sm border transition-colors ${
+                  filtro === 'cnpj_divergente' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white border-purple-200 text-purple-700 hover:border-purple-400'
+                }`}
+              >
+                🏷️ CNPJ a corrigir ({totalCnpjDivergente})
+              </button>
+            )}
           </div>
 
           {/* Tabela */}
@@ -708,6 +724,14 @@ export function ConferenciaNF() {
                         </span>
                         {item.associacaoManual && (
                           <span className="ml-1 text-xs text-blue-400" title="Associação manual">🔗</span>
+                        )}
+                        {item.cnpjDivergente && (
+                          <span
+                            className="ml-1 inline-block px-1.5 py-0.5 rounded text-xs font-medium text-purple-700 bg-purple-50"
+                            title={`CNPJ a corrigir no cadastro:\nPlanilha: ${item.planilha?.cnpj || '—'}\nConta Azul: ${item.contaAzul?.cnpj || '—'}`}
+                          >
+                            🏷️ CNPJ
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3 max-w-xs">

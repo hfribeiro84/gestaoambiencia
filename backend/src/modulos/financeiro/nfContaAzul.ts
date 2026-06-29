@@ -57,8 +57,15 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
       });
 
       if (!resp.ok) {
+        if (resp.status === 403) {
+          throw new Error(
+            `Conta Azul: acesso negado (403) ao endpoint de NFS-e. ` +
+            `O token OAuth não tem permissão para notas fiscais. ` +
+            `Acesse Integrações e clique em "Reconectar" no Conta Azul para obter um novo token.`
+          );
+        }
         const corpo = await resp.text();
-        throw new Error(`Conta Azul API ${resp.status}: ${corpo.slice(0, 300)}`);
+        throw new Error(`Conta Azul API ${resp.status}: ${corpo.slice(0, 200)}`);
       }
 
       const data = (await resp.json()) as RespostaNfse;

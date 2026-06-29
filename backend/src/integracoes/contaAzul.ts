@@ -202,24 +202,24 @@ export async function chamadaApi(
   // Tenta a URL configurada primeiro
   const resp = await fetch(`${cfg.api_base}${endpoint}${qs}`, { headers });
 
-  if (resp.status !== 404) {
-    // Funciona — cacheia
+  // Erros de autenticação/permissão (401, 403) e sucesso (2xx, 404) não precisam de fallback
+  if (resp.ok || resp.status === 401 || resp.status === 403 || resp.status === 404) {
     apiBaseOk.set(conta, cfg.api_base);
     return resp;
   }
 
-  // 404: tenta as bases alternativas em ordem
+  // Para outros erros (5xx, etc.) tenta bases alternativas — só aceita se der 2xx ou 404
   for (const base of CA_BASES_FALLBACK) {
     if (base === cfg.api_base) continue;
     const alt = await fetch(`${base}${endpoint}${qs}`, { headers });
-    if (alt.status !== 404) {
+    if (alt.ok || alt.status === 404) {
       console.log(`[CA ${conta}] URL base corrigida para: ${base}`);
       apiBaseOk.set(conta, base);
       return alt;
     }
   }
 
-  // Nenhuma funcionou — devolve o 404 original
+  // Nenhuma alternativa funcionou — devolve o erro original
   apiBaseOk.set(conta, cfg.api_base);
   return resp;
 }

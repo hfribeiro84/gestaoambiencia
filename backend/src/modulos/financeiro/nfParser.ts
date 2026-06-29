@@ -87,19 +87,36 @@ export function parseCsvAss(csv: string): NfPlanilha[] {
   return resultado;
 }
 
+function formatCnpj(cnpj: string): string {
+  return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+
 export function parseCsvNetr(csv: string): NfPlanilha[] {
   const linhas = parseLinhas(csv);
   const { idx: headerIdx, row: headers } = findHeaderRow(linhas, 'empresa', 'unidade', 'cnpj');
 
-  const colEmissao  = findCol(headers, 'emiss');
-  const colEmpresa  = findCol(headers, 'empresa');
-  const colUnidade  = findCol(headers, 'unidade');
-  const colCnpj     = findCol(headers, 'cnpj');
-  const colValor    = findCol(headers, 'cobran');
-  const colIss      = findCol(headers, 'reten');
+  const colEmissao     = findCol(headers, 'emiss');
+  const colEmpresa     = findCol(headers, 'empresa');
+  const colUnidade     = findCol(headers, 'unidade');
+  const colFaturamento = findCol(headers, 'faturamento');  // "Corporativo" ou "Unidade"
+  const colCnpj        = findCol(headers, 'cnpj');
+  const colValor       = findCol(headers, 'cobran');
+  const colIss         = findCol(headers, 'reten');
 
   const dados = linhas.slice(headerIdx + 1);
-  const resultado: NfPlanilha[] = [];
+
+  // Corporativo: agrupado por CNPJ → 1 NF por CNPJ com soma dos valores
+  type GrupoCorp = {
+    emissaoNF: string;
+    empresas: Set<string>;
+    nUnidades: number;
+    valorTotal: number;
+    retencaoISS: boolean;
+  };
+  const gruposCorp = new Map<string, GrupoCorp>();
+
+  // Unidade: 1 NF por linha (CNPJ individual da obra/unidade)
+  const itensUnidade: NfPlanilha[] = [];
 
   for (const row of dados) {
     const empresa = colEmpresa >= 0 ? (row[colEmpresa] ?? '').trim() : '';
@@ -108,14 +125,52 @@ export function parseCsvNetr(csv: string): NfPlanilha[] {
     const valorTotal = parseBRL(colValor >= 0 ? (row[colValor] ?? '') : '');
     if (valorTotal === 0) continue;
 
-    resultado.push({
-      emissaoNF: colEmissao >= 0 ? (row[colEmissao] ?? '').trim().toUpperCase() : '',
-      cliente: empresa,
-      descricao: colUnidade >= 0 ? (row[colUnidade] ?? '').trim() : '',
-      cnpj: (colCnpj >= 0 ? (row[colCnpj] ?? '') : '').replace(/\D/g, ''),
-      valorTotal,
-      retencaoISS: (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM',
+    const emissaoNF   = (colEmissao >= 0 ? (row[colEmissao] ?? '') : '').trim().toUpperCase();
+    const faturamento = (colFaturamento >= 0 ? (row[colFaturamento] ?? '') : '').trim().toLowerCase();
+    const cnpj        = (colCnpj >= 0 ? (row[colCnpj] ?? '') : '').replace(/\D/g, '');
+    const unidade     = colUnidade >= 0 ? (row[colUnidade] ?? '').trim() : '';
+    const retencaoISS = (colIss >= 0 ? row[colIss] : '').trim().toUpperCase() === 'SIM';
+
+    if (faturamento === 'corporativo') {
+      if (!cnpj) continue;
+      if (!gruposCorp.has(cnpj)) {
+        gruposCorp.set(cnpj, { emissaoNF: '', empresas: new Set(), nUnidades: 0, valorTotal: 0, retencaoISS: false });
+      }
+      const g = gruposCorp.get(cnpj)!;
+      if (emissaoNF && !g.emissaoNF) g.emissaoNF = emissaoNF;
+      g.empresas.add(empresa);
+      g.nUnidades++;
+      g.valorTotal += valorTotal;
+      if (retencaoISS) g.retencaoISS = true;
+    } else {
+      itensUnidade.push({
+        emissaoNF,
+        cliente: empresa,
+        descricao: unidade,
+        cnpj,
+        valorTotal,
+        retencaoISS,
+      });
+    }
+  }
+
+  // Converte grupos corporativos em itens de planilha
+  const itensCorp: NfPlanilha[] = [];
+  for (const [cnpj, g] of gruposCorp) {
+    const empresasList = [...g.empresas];
+    const clienteNome = empresasList.length === 1
+      ? empresasList[0]
+      : `${empresasList[0]} +${empresasList.length - 1} empresas`;
+    itensCorp.push({
+      emissaoNF: g.emissaoNF,
+      cliente: clienteNome,
+      descricao: `${g.nUnidades} unidades · ${formatCnpj(cnpj)}`,
+      cnpj,
+      valorTotal: parseFloat(g.valorTotal.toFixed(2)),
+      retencaoISS: g.retencaoISS,
     });
   }
-  return resultado;
+
+  // Corporativo primeiro, depois Unidades (ordem natural do CSV)
+  return [...itensCorp, ...itensUnidade];
 }

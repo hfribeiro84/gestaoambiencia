@@ -125,16 +125,15 @@ rotasDre.post('/financeiro/dre/calcular/:empresa/:mes/:ano', autenticar, async (
     }
 
     const dados = await calcularDRE(empresa, mes, ano);
+    const calculado_em = new Date().toISOString();
 
-    await supabaseAdmin.from('dre_snapshot').insert({
-      empresa,
-      mes_ref: mes,
-      ano_ref: ano,
-      calculado_em: new Date().toISOString(),
-      dados,
-    });
+    const { data: saved } = await supabaseAdmin
+      .from('dre_snapshot')
+      .insert({ empresa, mes_ref: mes, ano_ref: ano, calculado_em, dados })
+      .select('id, empresa, mes_ref, ano_ref, calculado_em')
+      .single();
 
-    res.json(dados);
+    res.json({ ...(saved ?? { id: '', empresa, mes_ref: mes, ano_ref: ano, calculado_em }), dados });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }
@@ -148,7 +147,7 @@ rotasDre.get('/financeiro/dre/ultimo/:empresa', autenticar, async (req: Request,
     const { empresa } = req.params;
     const { data, error } = await supabaseAdmin
       .from('dre_snapshot')
-      .select('dados')
+      .select('*')
       .eq('empresa', empresa)
       .order('calculado_em', { ascending: false })
       .limit(1)
@@ -156,10 +155,10 @@ rotasDre.get('/financeiro/dre/ultimo/:empresa', autenticar, async (req: Request,
 
     if (error && error.code !== 'PGRST116') throw new Error(error.message);
     if (!data) {
-      res.status(404).json({ erro: 'Nenhum snapshot encontrado.' });
+      res.json(null);
       return;
     }
-    res.json(data.dados);
+    res.json(data);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

@@ -681,14 +681,19 @@ export function ConferenciaNF() {
                         )}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
-                        <div className="font-medium truncate">
-                          {item.planilha?.cliente ?? item.contaAzul?.cliente ?? '—'}
+                        {/* Linha 1 (negrito): nome como aparece no Conta Azul */}
+                        <div className="font-semibold truncate">
+                          {item.contaAzul?.cliente ?? item.planilha?.cliente ?? '—'}
                         </div>
-                        {(item.planilha?.descricao || item.contaAzul?.descricao) && (
-                          <div className="text-xs text-gray-400 truncate">
-                            {item.planilha?.descricao ?? item.contaAzul?.descricao}
-                          </div>
-                        )}
+                        {/* Linha 2 (cinza): projeto da planilha (matched/pendente) ou descrição da NF (não prevista) */}
+                        {(() => {
+                          const sub = item.planilha
+                            ? (item.planilha.descricao || item.planilha.cliente)
+                            : item.contaAzul?.descricao;
+                          return sub ? (
+                            <div className="text-xs text-gray-400 truncate mt-0.5">{sub}</div>
+                          ) : null;
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-center text-gray-500 whitespace-nowrap">
                         {item.contaAzul?.numero ?? '—'}

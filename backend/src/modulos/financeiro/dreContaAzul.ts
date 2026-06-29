@@ -39,13 +39,16 @@ function extrairId(item: Record<string, unknown>): string {
   return (item.id ?? item.codigo ?? '') as string;
 }
 
-/** Extrai o array de itens de uma resposta paginada (Spring-style ou CA v1). */
+/** Extrai o array de itens de uma resposta paginada (múltiplos formatos CA). */
 function extrairItens(data: unknown): unknown[] {
   if (!data || typeof data !== 'object') return [];
   const d = data as Record<string, unknown>;
-  if (Array.isArray(d.content)) return d.content;
-  if (Array.isArray(d.itens)) return d.itens;
-  if (Array.isArray(data)) return data as unknown[];
+  if (Array.isArray(d.content)) return d.content;       // Spring Boot
+  if (Array.isArray(d.itens)) return d.itens;            // CA formato A
+  if (Array.isArray(d.data)) return d.data;              // CA formato B
+  if (Array.isArray(d.items)) return d.items;            // genérico
+  if (Array.isArray(d.records)) return d.records;        // CA formato C
+  if (Array.isArray(data)) return data as unknown[];     // array direto
   return [];
 }
 
@@ -53,11 +56,13 @@ function extrairItens(data: unknown): unknown[] {
 function extrairTotalPaginas(data: unknown): number {
   if (!data || typeof data !== 'object') return 1;
   const d = data as Record<string, unknown>;
-  // Spring-style
   if (typeof d.totalPages === 'number') return d.totalPages || 1;
-  // CA v1 style
+  if (typeof d.total_pages === 'number') return d.total_pages || 1;
   const pag = d.paginacao as Record<string, unknown> | undefined;
   if (pag && typeof pag.total_paginas === 'number') return pag.total_paginas || 1;
+  const meta = d.meta as Record<string, unknown> | undefined;
+  if (meta && typeof meta.total_pages === 'number') return meta.total_pages || 1;
+  if (meta && typeof meta.totalPages === 'number') return meta.totalPages || 1;
   return 1;
 }
 

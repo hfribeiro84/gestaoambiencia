@@ -4,6 +4,7 @@ import { autenticar } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { calcularDRE } from '../modulos/financeiro/dreCalculo';
 import { buscarSaldoInicial, buscarTransferencias, buscarLancamentosCA, buscarLancamentosExtrato } from '../modulos/financeiro/dreContaAzul';
+import { chamadaApi } from '../integracoes/contaAzul';
 import { criarCliente } from '../integracoes/claude';
 import type { EmpresaDRE, ItemExtrato, CategoriaCA } from '../modulos/financeiro/dreTypes';
 
@@ -391,6 +392,47 @@ Seja direto, use linguagem de gestão, sem repetir números que já aparecem nos
 
     const texto = resp.content.find((c) => c.type === 'text');
     res.json({ resumo: texto?.type === 'text' ? texto.text : '' });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/debug/raw/:empresa/:mes/:ano
+// Resposta bruta do CA (sem parsing) — para diagnóstico
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/debug/raw/:empresa/:mes/:ano', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    const mes = parseInt(req.params.mes, 10);
+    const ano = parseInt(req.params.ano, 10);
+    if (!empresaValida(empresa) || empresa === 'consolidado') {
+      res.status(400).json({ erro: 'Use ass ou netr.' });
+      return;
+    }
+    const conta = contaCA(empresa);
+    const de = primeiroDia(mes, ano);
+    const ate = ultimoDia(mes, ano);
+
+    const [respRec, respDesp] = await Promise.all([
+      chamadaApi(conta, '/v1/searchinstallmentstoreceivebyfilter', {
+        dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '1', tamanho_pagina: '3',
+      }),
+      chamadaApi(conta, '/v1/searchinstallmentstopaybyfilter', {
+        dataVencimentoInicio: de, dataVencimentoFim: ate, pagina: '1', tamanho_pagina: '3',
+      }),
+    ]);
+
+    const [rawRec, rawDesp] = await Promise.all([
+      respRec.json().catch(() => `HTTP ${respRec.status}`),
+      respDesp.json().catch(() => `HTTP ${respDesp.status}`),
+    ]);
+
+    res.json({
+      empresa, mes, ano, de, ate,
+      receitas: { status: respRec.status, corpo: rawRec },
+      despesas: { status: respDesp.status, corpo: rawDesp },
+    });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

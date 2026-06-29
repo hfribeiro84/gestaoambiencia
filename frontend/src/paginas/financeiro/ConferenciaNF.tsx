@@ -16,6 +16,7 @@ interface NfPlanilha {
 interface NfEmitida {
   id: string;
   numero: string;
+  numeroRps?: string;
   dataEmissao: string;
   status: string;
   cliente: string;
@@ -74,6 +75,23 @@ const LABEL_STATUS: Record<StatusConferencia, string> = {
   pendente: '❌ Pendente',
   nao_esperada: '🔵 Não prevista',
 };
+
+// Rótulos sem emoji para o Excel
+const LABEL_PLANO: Record<StatusConferencia, string> = {
+  conferido: 'Conferido',
+  conferido_diferenca: 'Divergência',
+  pendente: 'Pendente',
+  nao_esperada: 'Não prevista',
+};
+
+function escaparCsv(v: string): string {
+  return /[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function numeroBR(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '';
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 function formatBRL(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -418,6 +436,21 @@ export function ConferenciaNF() {
     }
   }
 
+  async function diagnosticoCA() {
+    const termo = window.prompt('Filtrar notas do Conta Azul por nome (ex: marilia, sinop). Vazio = resumo geral:') ?? '';
+    setCarregando(true);
+    setErro('');
+    try {
+      const qs = termo ? `?filtro=${encodeURIComponent(termo)}` : '';
+      const r = await api<unknown>(`/api/financeiro/debug/nfs-ca/${empresa}/${mes}/${ano}${qs}`);
+      setErro(JSON.stringify(r, null, 2));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
   async function verPreviewCsv() {
     if (!csvContent) { setErro('Selecione o arquivo CSV primeiro.'); return; }
     setCarregando(true);
@@ -438,6 +471,46 @@ export function ConferenciaNF() {
   function abrirAssociacao(item: ItemConferencia) {
     const chave = item.planilha ? chaveItem(item.planilha) : null;
     setModoAssociacao({ item, chaveAtual: chave });
+  }
+
+  function exportarExcel() {
+    if (!resultado) return;
+    const aliq = resultado.aliquotaISS ?? aliquotaISS;
+    const colunas = [
+      'Status', 'Cliente (Conta Azul)', 'Empresa (Planilha)', 'Projeto / Unidade',
+      'NFS-e nº', 'RPS nº', 'Valor Planilha (bruto)', 'Ret. ISS', 'Valor Líquido', 'Valor NF', 'Diferença',
+      'CNPJ Planilha', 'CNPJ Conta Azul', 'CNPJ Divergente', 'Associação Manual',
+    ];
+    const linhas = resultado.itens.map((i) => {
+      const temMatch = i.status === 'conferido' || i.status === 'conferido_diferenca';
+      const vliq = i.planilha ? valorLiquido(i.planilha, aliq) : null;
+      const dif = temMatch && vliq !== null ? (i.contaAzul?.valor ?? 0) - vliq : null;
+      return [
+        LABEL_PLANO[i.status],
+        i.contaAzul?.cliente ?? '',
+        i.planilha?.cliente ?? '',
+        i.planilha?.descricao ?? '',
+        i.contaAzul?.numero ?? '',
+        i.contaAzul?.numeroRps ?? '',
+        numeroBR(i.planilha?.valorTotal),
+        i.planilha ? (i.planilha.retencaoISS ? 'Sim' : 'Não') : '',
+        numeroBR(vliq),
+        numeroBR(i.contaAzul?.valor),
+        numeroBR(dif),
+        i.planilha?.cnpj ?? '',
+        i.contaAzul?.cnpj ?? '',
+        i.cnpjDivergente ? 'Sim' : '',
+        i.associacaoManual ? 'Sim' : '',
+      ].map((c) => escaparCsv(String(c))).join(';');
+    });
+    const csv = '﻿' + [colunas.join(';'), ...linhas].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `conferencia-nf-${empresa}-${ano}-${String(mes).padStart(2, '0')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function aoSalvarAssociacao(novoResultado: ResultadoConferencia) {
@@ -665,7 +738,7 @@ export function ConferenciaNF() {
           })()}
 
           {/* Filtros */}
-          <div className="flex gap-2 mb-4 flex-wrap">
+          <div className="flex gap-2 mb-4 flex-wrap items-center">
             {(['todos', 'conferido', 'conferido_diferenca', 'pendente', 'nao_esperada'] as const).map((f) => (
               <button
                 key={f}
@@ -677,6 +750,18 @@ export function ConferenciaNF() {
                 {f === 'todos' ? `Todos (${resultado.itens.length})` : LABEL_STATUS[f]}
               </button>
             ))}
+            <button
+              onClick={diagnosticoCA}
+              className="ml-auto px-3 py-1 rounded text-sm border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 whitespace-nowrap"
+            >
+              🔍 Diagnóstico CA
+            </button>
+            <button
+              onClick={exportarExcel}
+              className="px-3 py-1 rounded text-sm border border-green-300 text-green-700 bg-white hover:bg-green-50 whitespace-nowrap"
+            >
+              ⬇️ Exportar Excel
+            </button>
             {totalCnpjDivergente > 0 && (
               <button
                 onClick={() => setFiltro('cnpj_divergente')}
@@ -696,7 +781,7 @@ export function ConferenciaNF() {
                 <tr>
                   <th className="px-4 py-3 text-left">Status</th>
                   <th className="px-4 py-3 text-left">Cliente / Projeto</th>
-                  <th className="px-4 py-3 text-center">NF nº</th>
+                  <th className="px-4 py-3 text-center">NFS-e / RPS</th>
                   <th className="px-4 py-3 text-right">Valor planilha</th>
                   <th className="px-4 py-3 text-center">Ret. ISS</th>
                   <th className="px-4 py-3 text-right">Valor líquido</th>
@@ -774,7 +859,14 @@ export function ConferenciaNF() {
                         })()}
                       </td>
                       <td className="px-4 py-3 text-center text-gray-500 whitespace-nowrap">
-                        {item.contaAzul?.numero ?? '—'}
+                        {item.contaAzul ? (
+                          <>
+                            <div>{item.contaAzul.numero || '—'}</div>
+                            {item.contaAzul.numeroRps && (
+                              <div className="text-xs text-gray-400">RPS {item.contaAzul.numeroRps}</div>
+                            )}
+                          </>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {item.planilha ? formatBRL(item.planilha.valorTotal) : '—'}

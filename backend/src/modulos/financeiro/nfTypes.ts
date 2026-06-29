@@ -11,7 +11,8 @@ export interface NfPlanilha {
 
 export interface NfEmitida {
   id: string;
-  numero: string;
+  numero: string;       // número da NFS-e
+  numeroRps?: string;   // número do RPS (recibo provisório)
   dataEmissao: string;
   status: string;
   cliente: string;

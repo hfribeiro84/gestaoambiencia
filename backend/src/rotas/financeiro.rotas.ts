@@ -266,6 +266,78 @@ rotasFinanceiro.get('/financeiro/debug/matching/:empresa/:mes/:ano', autenticar,
 });
 
 // ---------------------------------------------------------------------------
+// GET /financeiro/debug/nfs-ca/:empresa/:mes/:ano  — inspeciona notas cruas do CA
+//   ?filtro=marilia → só notas cujo nome_cliente contém o termo
+// Mostra as chaves cruas (p/ achar o campo do RPS) e detecta duplicatas.
+// ---------------------------------------------------------------------------
+rotasFinanceiro.get('/financeiro/debug/nfs-ca/:empresa/:mes/:ano', autenticar, async (req, res) => {
+  const conta = (req.params.empresa === 'ass' ? 'ass' : 'netr') as 'ass' | 'netr';
+  const mm = req.params.mes.padStart(2, '0');
+  const ano = req.params.ano;
+  const ultimo = String(new Date(Number(ano), Number(req.params.mes), 0).getDate()).padStart(2, '0');
+  const filtro = String(req.query.filtro ?? '').toLowerCase();
+
+  const periodos = [
+    { de: `${ano}-${mm}-01`, ate: `${ano}-${mm}-15` },
+    { de: `${ano}-${mm}-16`, ate: `${ano}-${mm}-${ultimo}` },
+  ];
+
+  const brutos: Record<string, unknown>[] = [];
+  const idsVistos = new Set<string>();
+  try {
+    for (const p of periodos) {
+      let pagina = 1;
+      while (true) {
+        const r = await chamadaApi(conta, '/v1/notas-fiscais-servico', {
+          data_competencia_de: p.de, data_competencia_ate: p.ate,
+          pagina: String(pagina), tamanho_pagina: '100',
+        });
+        if (!r.ok) { res.json({ erro: `API ${r.status}`, trecho: (await r.text()).slice(0, 300) }); return; }
+        const data = await r.json() as { itens?: Record<string, unknown>[]; paginacao?: { total_paginas?: number } };
+        for (const it of data.itens ?? []) {
+          const id = String(it.id ?? '');
+          if (idsVistos.has(id)) continue;
+          idsVistos.add(id);
+          brutos.push(it);
+        }
+        if (pagina >= (data.paginacao?.total_paginas ?? 1)) break;
+        pagina++;
+      }
+    }
+  } catch (e) {
+    res.json({ erro: (e as Error).message }); return;
+  }
+
+  const filtrados = filtro
+    ? brutos.filter((it) => String(it.nome_cliente ?? '').toLowerCase().includes(filtro))
+    : brutos;
+
+  // Detecta nome_cliente repetido (possíveis "duplicatas" reais no CA)
+  const porNome = new Map<string, number>();
+  for (const it of brutos) {
+    const nome = String(it.nome_cliente ?? '');
+    porNome.set(nome, (porNome.get(nome) ?? 0) + 1);
+  }
+  const repetidos = [...porNome.entries()].filter(([, n]) => n > 1).map(([nome, n]) => ({ nome, qtd: n }));
+
+  res.json({
+    totalNotas: brutos.length,
+    chavesDaPrimeiraNota: brutos[0] ? Object.keys(brutos[0]) : [],
+    nomesRepetidos: repetidos,
+    notas: filtrados.map((it) => ({
+      id: it.id,
+      numero_nfse: it.numero_nfse,
+      numero_rps: it.numero_rps,
+      status: it.status,
+      nome_cliente: it.nome_cliente,
+      documento_cliente: it.documento_cliente,
+      valor: it.valor_total_nfse,
+      data: it.data_competencia,
+    })),
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Debug DRE
 // ---------------------------------------------------------------------------
 

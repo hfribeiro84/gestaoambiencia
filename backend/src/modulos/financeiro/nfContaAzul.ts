@@ -15,6 +15,7 @@ const STATUS_VALIDOS = new Set(['EMITIDA', 'CORRIGIDA_SUCESSO']);
 interface ItemNfse {
   id: string;
   numero_nfse: number;
+  numero_rps?: number | string;
   data_competencia: string;
   status: string;
   nome_cliente: string;
@@ -79,6 +80,7 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
         nfs.push({
           id: item.id,
           numero: String(item.numero_nfse ?? ''),
+          numeroRps: item.numero_rps != null ? String(item.numero_rps) : '',
           dataEmissao: item.data_competencia ?? '',
           status: item.status,
           cliente: item.nome_cliente ?? '',

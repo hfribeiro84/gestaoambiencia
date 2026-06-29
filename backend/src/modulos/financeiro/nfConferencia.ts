@@ -57,6 +57,25 @@ function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
     || campoMatchCa(normNome(planilha.descricao ?? ''), caNorm);
 }
 
+/** Extrai os códigos entre parênteses (ex: "Obra (530C)" → ["530c"], "(647CB)" → ["647cb"]). */
+function codigosObra(texto: string): string[] {
+  const m = (texto ?? '').toLowerCase().match(/\(([a-z0-9]+)\)/g) ?? [];
+  return m.map((x) => x.replace(/[()]/g, ''));
+}
+
+/**
+ * Fallback de nome para NETR (Unidade): casa pelo código da obra entre parênteses.
+ * Extração exata evita confundir "530C" com "530CB". Itens Corporativos agrupados
+ * não têm código entre parênteses, então não geram falso positivo.
+ */
+function matchNetrNome(planilha: NfPlanilha, ca: NfEmitida): boolean {
+  const codsP = [...codigosObra(planilha.descricao ?? ''), ...codigosObra(planilha.cliente ?? '')];
+  if (codsP.length === 0) return false;
+  const codsC = codigosObra(ca.cliente ?? '');
+  if (codsC.length === 0) return false;
+  return codsP.some((cp) => codsC.includes(cp));
+}
+
 export function conferirNfs(
   empresa: Empresa,
   planilha: NfPlanilha[],
@@ -68,9 +87,14 @@ export function conferirNfs(
   const usados = new Set<number>();     // índice na planilha já usado (suporta itens duplicados)
   const itens: ItemConferencia[] = [];
 
-  const escolherMatch = empresa === 'netr'
-    ? (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS)
-    : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
+  // Matchers em ordem de prioridade. NETR: CNPJ primeiro, depois código da obra
+  // (fallback para quando o CNPJ da NF difere do CNPJ da obra na planilha).
+  const matchers = empresa === 'netr'
+    ? [
+        (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS),
+        (nfP: NfPlanilha, ca: NfEmitida) => matchNetrNome(nfP, ca),
+      ]
+    : [(nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca)];
 
   // 1. Associações manuais — têm prioridade absoluta sobre o matching automático.
   //    caId === SEM_PAR força o item a ficar Pendente (bloqueia re-match automático).
@@ -99,23 +123,33 @@ export function conferirNfs(
     });
   }
 
-  // 2. Matching automático nos itens restantes (por índice — não pula duplicatas).
-  for (let i = 0; i < planilha.length; i++) {
-    if (usados.has(i)) continue;
-    const nfP = planilha[i];
-    const match = contaAzul.find((ca) => !matchados.has(ca.id) && escolherMatch(nfP, ca));
-    if (match) {
-      matchados.add(match.id);
-      usados.add(i);
-      const valorOk = valorProximo(match.valor, vliq(nfP, aliquotaISS));
-      itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: match });
-    } else {
-      usados.add(i);
-      itens.push({ status: 'pendente', planilha: nfP });
+  // 2. Matching automático em passes: cada matcher só roda nos itens ainda livres.
+  //    Garante que o match por CNPJ tenha prioridade sobre o match por nome.
+  const conferidos: { i: number; ca: NfEmitida }[] = [];
+  for (const matcher of matchers) {
+    for (let i = 0; i < planilha.length; i++) {
+      if (usados.has(i)) continue;
+      const nfP = planilha[i];
+      const match = contaAzul.find((ca) => !matchados.has(ca.id) && matcher(nfP, ca));
+      if (match) {
+        matchados.add(match.id);
+        usados.add(i);
+        conferidos.push({ i, ca: match });
+      }
     }
   }
+  for (const { i, ca } of conferidos) {
+    const nfP = planilha[i];
+    const valorOk = valorProximo(ca.valor, vliq(nfP, aliquotaISS));
+    itens.push({ status: valorOk ? 'conferido' : 'conferido_diferenca', planilha: nfP, contaAzul: ca });
+  }
 
-  // 3. NFs do CA sem par na planilha.
+  // 3. Itens da planilha que sobraram → pendentes.
+  for (let i = 0; i < planilha.length; i++) {
+    if (!usados.has(i)) itens.push({ status: 'pendente', planilha: planilha[i] });
+  }
+
+  // 4. NFs do CA sem par na planilha.
   for (const ca of contaAzul) {
     if (!matchados.has(ca.id)) {
       itens.push({ status: 'nao_esperada', contaAzul: ca });

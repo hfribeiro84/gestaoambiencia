@@ -5,8 +5,22 @@ import { buscarNfsEmitidas } from '../modulos/financeiro/nfContaAzul';
 import { calcularResultado } from '../modulos/financeiro/nfConferencia';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { supabaseAdmin } from '../config/supabase';
-import type { Empresa, NfPlanilha, ResultadoConferencia, AssociacaoManual } from '../modulos/financeiro/nfTypes';
+import type { Empresa, NfPlanilha, NfEmitida, ResultadoConferencia, AssociacaoManual } from '../modulos/financeiro/nfTypes';
 import { SEM_PAR } from '../modulos/financeiro/nfTypes';
+
+/** Reconstrói a lista de NFs do CA a partir de um resultado salvo (evita re-consultar a API). */
+function caDoResultado(resultado: ResultadoConferencia | null): NfEmitida[] {
+  if (!resultado) return [];
+  const vistos = new Set<string>();
+  const out: NfEmitida[] = [];
+  for (const item of resultado.itens) {
+    if (item.contaAzul && !vistos.has(item.contaAzul.id)) {
+      vistos.add(item.contaAzul.id);
+      out.push(item.contaAzul);
+    }
+  }
+  return out;
+}
 
 export const rotasFinanceiro = Router();
 
@@ -203,9 +217,13 @@ rotasFinanceiro.post('/financeiro/nf/associar', autenticar, async (req, res) => 
 
     await salvarAssociacoes(empresa, Number(mes), Number(ano), assocs);
 
-    let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
+    // Reusa as NFs do último resultado salvo — associar não altera o conjunto de
+    // NFs do CA, só o emparelhamento. Evita uma chamada lenta à API do Conta Azul.
+    let nfsEmitidas = caDoResultado(salva.ultimo_resultado);
     let erroApi: string | undefined;
-    try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
+    if (nfsEmitidas.length === 0) {
+      try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
+    }
 
     const aliquotaFinal = salva.aliquota_iss ?? 0;
     const resultado = calcularResultado(

@@ -77,6 +77,20 @@ function formatBRL(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+/**
+ * Lê o arquivo respeitando o encoding. Planilhas exportadas no Windows costumam
+ * vir em Windows-1252 (latin-1); `file.text()` assume UTF-8 e corrompe acentos.
+ * Tenta UTF-8 estrito; se falhar, cai para Windows-1252.
+ */
+async function lerArquivoTexto(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
+}
+
 function formatDataHora(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -531,7 +545,7 @@ export function ConferenciaNF() {
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (file) { setNomeArquivo(file.name); setCsvContent(await file.text()); }
+                  if (file) { setNomeArquivo(file.name); setCsvContent(await lerArquivoTexto(file)); }
                   else { setNomeArquivo(''); setCsvContent(''); }
                 }}
               />

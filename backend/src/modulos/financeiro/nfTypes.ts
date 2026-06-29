@@ -39,6 +39,9 @@ export function chaveItemPlanilha(item: NfPlanilha): string {
   return `${item.cliente}|${item.descricao}|${item.valorTotal}`;
 }
 
+/** caId especial: indica que o item deve permanecer Pendente (sem auto-match). */
+export const SEM_PAR = '__sem_par__';
+
 export interface ResultadoConferencia {
   empresa: Empresa;
   mes: number;

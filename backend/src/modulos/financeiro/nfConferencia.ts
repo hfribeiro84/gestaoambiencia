@@ -1,7 +1,7 @@
 import type {
   Empresa, NfPlanilha, NfEmitida, ItemConferencia, ResultadoConferencia, AssociacaoManual,
 } from './nfTypes';
-import { chaveItemPlanilha } from './nfTypes';
+import { chaveItemPlanilha, SEM_PAR } from './nfTypes';
 
 function normNome(nome: string): string {
   return (nome ?? '')
@@ -73,15 +73,23 @@ export function conferirNfs(
     : (nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca);
 
   // 1. Associações manuais — têm prioridade absoluta sobre o matching automático.
-  //    Quando há itens duplicados na planilha (mesma chave), pega o primeiro disponível.
+  //    caId === SEM_PAR força o item a ficar Pendente (bloqueia re-match automático).
   for (const assoc of associacoesManuais) {
     const pIdx = planilha.findIndex((p, i) => chaveItemPlanilha(p) === assoc.chaveItem && !usados.has(i));
-    const ca = contaAzul.find((c) => c.id === assoc.caId);
-    if (pIdx === -1 || !ca || matchados.has(ca.id)) continue;
+    if (pIdx === -1) continue;
 
-    matchados.add(ca.id);
     usados.add(pIdx);
     const nfP = planilha[pIdx];
+
+    if (assoc.caId === SEM_PAR) {
+      itens.push({ status: 'pendente', planilha: nfP });
+      continue;
+    }
+
+    const ca = contaAzul.find((c) => c.id === assoc.caId);
+    if (!ca || matchados.has(ca.id)) continue;
+
+    matchados.add(ca.id);
     const valorOk = valorProximo(ca.valor, vliq(nfP, aliquotaISS));
     itens.push({
       status: valorOk ? 'conferido' : 'conferido_diferenca',

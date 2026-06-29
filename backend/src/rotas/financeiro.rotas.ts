@@ -6,6 +6,7 @@ import { calcularResultado } from '../modulos/financeiro/nfConferencia';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { supabaseAdmin } from '../config/supabase';
 import type { Empresa, NfPlanilha, ResultadoConferencia, AssociacaoManual } from '../modulos/financeiro/nfTypes';
+import { SEM_PAR } from '../modulos/financeiro/nfTypes';
 
 export const rotasFinanceiro = Router();
 
@@ -189,8 +190,10 @@ rotasFinanceiro.post('/financeiro/nf/associar', autenticar, async (req, res) => 
     let assocs: AssociacaoManual[] = salva.associacoes_manuais ?? [];
 
     if (caId === null) {
-      // Remove associação do item da planilha
+      // Remove associação e marca SEM_PAR para bloquear o re-match automático.
+      // Sem isso, o algoritmo simplesmente re-criaria o par na próxima rodada.
       assocs = assocs.filter((a) => a.chaveItem !== chaveItem);
+      assocs.push({ chaveItem, caId: SEM_PAR });
     } else {
       // Remove quaisquer associações existentes envolvendo este item ou esta CA NF
       // (um item só pode ter um par; uma CA NF só pode ser par de um item)

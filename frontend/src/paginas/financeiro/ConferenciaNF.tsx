@@ -631,7 +631,7 @@ export function ConferenciaNF() {
                       </div>
                       <div className="rounded-lg p-4 bg-blue-50 text-blue-700">
                         <div className="text-xl font-bold">{formatBRL(totalValorCa)}</div>
-                        <div className="text-sm">Total NFs emitidas</div>
+                        <div className="text-sm">Total NFs emitidas (líquido)</div>
                       </div>
                       <div className={`rounded-lg p-4 ${Math.abs(diferenca) < 1 ? 'bg-green-50 text-green-700' : diferenca > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'}`}>
                         <div className="text-xl font-bold">{formatBRL(diferenca)}</div>

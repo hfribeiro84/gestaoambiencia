@@ -64,21 +64,35 @@ function matchAss(planilha: NfPlanilha, ca: NfEmitida): boolean {
     || campoMatchCa(normNome(planilha.descricao ?? ''), caNorm);
 }
 
-/** Extrai os códigos entre parênteses (ex: "Obra (530C)" → ["530c"], "(647CB)" → ["647cb"]). */
-function codigosObra(texto: string): string[] {
-  const m = (texto ?? '').toLowerCase().match(/\(([a-z0-9]+)\)/g) ?? [];
-  return m.map((x) => x.replace(/[()]/g, ''));
+/**
+ * Extrai os códigos identificadores de uma unidade NETR:
+ *   - tokens entre parênteses (Direcional: "Obra (530C)" → "530c", "(647CB)" → "647cb")
+ *   - números soltos de 3+ dígitos (Pacaembu: "Sinop 449" → "449", "Marilia 222" → "222")
+ * Remove CNPJs formatados antes (itens Corporativos têm o CNPJ na descrição e não
+ * devem gerar código). A extração exata evita confundir "530C" com "530CB".
+ */
+function codigosUnidade(texto: string): string[] {
+  const s = (texto ?? '').toLowerCase();
+  const cods: string[] = [];
+  // tokens entre parênteses
+  for (const m of s.match(/\(([a-z0-9]+)\)/g) ?? []) cods.push(m.replace(/[()]/g, ''));
+  // remove parênteses e CNPJs antes de pegar números soltos
+  const limpo = s
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g, ' ');
+  for (const m of limpo.match(/\d{3,}/g) ?? []) cods.push(m);
+  return cods;
 }
 
 /**
- * Fallback de nome para NETR (Unidade): casa pelo código da obra entre parênteses.
- * Extração exata evita confundir "530C" com "530CB". Itens Corporativos agrupados
- * não têm código entre parênteses, então não geram falso positivo.
+ * Match por nome para NETR: casa pelo código/número identificador da unidade.
+ * É o sinal mais confiável quando o CA cadastra várias unidades sob o mesmo CNPJ
+ * (ex: Pacaembu) — por isso roda ANTES do match por CNPJ.
  */
 function matchNetrNome(planilha: NfPlanilha, ca: NfEmitida): boolean {
-  const codsP = [...codigosObra(planilha.descricao ?? ''), ...codigosObra(planilha.cliente ?? '')];
+  const codsP = [...codigosUnidade(planilha.descricao ?? ''), ...codigosUnidade(planilha.cliente ?? '')];
   if (codsP.length === 0) return false;
-  const codsC = codigosObra(ca.cliente ?? '');
+  const codsC = codigosUnidade(ca.cliente ?? '');
   if (codsC.length === 0) return false;
   return codsP.some((cp) => codsC.includes(cp));
 }
@@ -94,12 +108,13 @@ export function conferirNfs(
   const usados = new Set<number>();     // índice na planilha já usado (suporta itens duplicados)
   const itens: ItemConferencia[] = [];
 
-  // Matchers em ordem de prioridade. NETR: CNPJ primeiro, depois código da obra
-  // (fallback para quando o CNPJ da NF difere do CNPJ da obra na planilha).
+  // Matchers em ordem de prioridade. NETR: código/número da unidade primeiro
+  // (sinal mais confiável — o CA pode cadastrar várias unidades sob o mesmo CNPJ),
+  // depois CNPJ para as unidades sem número e para os grupos Corporativos.
   const matchers = empresa === 'netr'
     ? [
-        (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS),
         (nfP: NfPlanilha, ca: NfEmitida) => matchNetrNome(nfP, ca),
+        (nfP: NfPlanilha, ca: NfEmitida) => matchPorCnpj(nfP, ca, aliquotaISS),
       ]
     : [(nfP: NfPlanilha, ca: NfEmitida) => matchAss(nfP, ca)];
 

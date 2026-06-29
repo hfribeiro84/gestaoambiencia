@@ -44,8 +44,8 @@ function matchPorCnpj(planilha: NfPlanilha, ca: NfEmitida, aliquotaISS: number):
 function campoMatchCa(campo: string, caNorm: string): boolean {
   if (!campo || campo.length < 4) return false;
   if (caNorm.includes(campo) || campo.includes(caNorm)) return true;
-  const pjP = campo.match(/pj\d+/)?.[0];
-  const pjC = caNorm.match(/pj\d+/)?.[0];
+  const pjP = campo.match(/pj\d+-\d+/)?.[0];
+  const pjC = caNorm.match(/pj\d+-\d+/)?.[0];
   return pjP !== undefined && pjC !== undefined && pjP === pjC;
 }
 

@@ -1309,107 +1309,70 @@ function AbaConfiguracoes({
         )}
 
         {diag && (() => {
-          const rec = diag.receitas as { status: number; corpo: unknown };
-          const desp = diag.despesas as { status: number; corpo: unknown };
+          type VariacaoDiag = { status: number; params: Record<string, string>; corpo: unknown };
+          type GrupoDiag = { camelCase: VariacaoDiag; snakeCase: VariacaoDiag; semFiltro: VariacaoDiag };
+          const recGrupo = diag.receitas as GrupoDiag;
+          const despGrupo = diag.despesas as GrupoDiag;
 
-          function contarItens(corpo: unknown): { chave: string; quantidade: number } | null {
+          function contarItens(corpo: unknown): { chave: string; quantidade: number; primeiro: Record<string, unknown> | null } | null {
             if (!corpo || typeof corpo !== 'object') return null;
             const d = corpo as Record<string, unknown>;
             for (const chave of ['data', 'content', 'itens', 'items', 'records']) {
-              if (Array.isArray(d[chave])) return { chave, quantidade: (d[chave] as unknown[]).length };
+              if (Array.isArray(d[chave])) {
+                const arr = d[chave] as Record<string, unknown>[];
+                return { chave, quantidade: arr.length, primeiro: arr[0] ?? null };
+              }
             }
-            if (Array.isArray(corpo)) return { chave: '(array direto)', quantidade: (corpo as unknown[]).length };
+            if (Array.isArray(corpo)) {
+              const arr = corpo as Record<string, unknown>[];
+              return { chave: '(array direto)', quantidade: arr.length, primeiro: arr[0] ?? null };
+            }
             return null;
           }
 
-          const infoRec = contarItens(rec?.corpo);
-          const infoDesp = contarItens(desp?.corpo);
-          const statusRec = rec?.status;
-          const statusDesp = desp?.status;
-
-          // 404 = sem registros no período (normal); 403 = token sem permissão (precisa reconectar)
-          const semPermissaoRec = statusRec === 403;
-          const semPermissaoDesp = statusDesp === 403;
-          const semDadosRec = !semPermissaoRec && (statusRec === 404 || (infoRec?.quantidade ?? 0) === 0);
-          const semDadosDesp = !semPermissaoDesp && (statusDesp === 404 || (infoDesp?.quantidade ?? 0) === 0);
-          const okRec = statusRec === 200 && (infoRec?.quantidade ?? 0) > 0;
-          const okDesp = statusDesp === 200 && (infoDesp?.quantidade ?? 0) > 0;
-          const algum403 = semPermissaoRec || semPermissaoDesp;
+          function renderVariacao(label: string, v: VariacaoDiag) {
+            const info = contarItens(v.corpo);
+            const ok = v.status === 200 && (info?.quantidade ?? 0) > 0;
+            const semDados = v.status === 404 || (v.status === 200 && (info?.quantidade ?? 0) === 0);
+            const semPerm = v.status === 403;
+            const cor = ok ? 'bg-green-50 border-green-200 text-green-800' : semPerm ? 'bg-orange-50 border-orange-200 text-orange-800' : semDados ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-red-50 border-red-200 text-red-800';
+            const icone = ok ? '✅' : semPerm ? '🔒' : semDados ? '—' : '❌';
+            return (
+              <div key={label} className={`flex items-start gap-2 p-2 rounded border text-xs ${cor}`}>
+                <span>{icone}</span>
+                <div>
+                  <span className="font-medium">{label}:</span>{' '}
+                  {ok ? `${info!.quantidade} item(s) — campo "${info!.chave}"` : semPerm ? 'Permissão negada (403)' : semDados ? `Sem dados (HTTP ${v.status})` : `Erro HTTP ${v.status}`}
+                  {ok && info?.primeiro && (() => {
+                    const p = info.primeiro!;
+                    const campos = Object.keys(p).join(' · ');
+                    return (
+                      <div className="mt-1 font-mono text-gray-500 break-all">{campos}</div>
+                    );
+                  })()}
+                </div>
+              </div>
+            );
+          }
 
           return (
-            <div className="space-y-2 text-sm">
-              {algum403 && (
-                <div className="p-3 bg-orange-50 border border-orange-300 rounded text-sm text-orange-800">
-                  <div className="font-semibold mb-1">⚠️ Token sem permissão para lançamentos financeiros</div>
-                  <div className="text-xs">
-                    O token OAuth atual não tem acesso às receitas/despesas do CA. Isso acontece quando a autorização foi feita
-                    sem os escopos de finanças. Para corrigir:
-                    <ol className="list-decimal ml-4 mt-1 space-y-0.5">
-                      <li>Vá em <b>Integrações</b> no menu lateral</li>
-                      <li>Clique em <b>Reconectar</b> no Conta Azul ASS (ou NETR)</li>
-                      <li>Autorize novamente no site do Conta Azul</li>
-                      <li>Volte aqui e teste novamente</li>
-                    </ol>
-                  </div>
-                </div>
-              )}
-
-              {/* Receitas */}
-              <div className={`flex items-start gap-3 p-3 rounded border ${okRec ? 'bg-green-50 border-green-200' : semPermissaoRec ? 'bg-orange-50 border-orange-200' : semDadosRec ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg mt-0.5">{okRec ? '✅' : semPermissaoRec ? '🔒' : semDadosRec ? '⚠️' : '❌'}</span>
-                <div>
-                  <div className="font-medium">
-                    Receitas — {okRec ? `${infoRec!.quantidade} item(s) encontrado(s)` : semPermissaoRec ? 'Permissão negada (403)' : semDadosRec ? 'Sem lançamentos neste período' : `Erro HTTP ${statusRec}`}
-                  </div>
-                  {semDadosRec && statusRec === 404 && (
-                    <div className="text-xs text-yellow-700 mt-0.5">
-                      HTTP 404 = período sem registros no CA. Tente outro mês que tenha receitas cadastradas.
-                    </div>
-                  )}
-                  {okRec && infoRec && (
-                    <div className="text-xs text-gray-600 mt-0.5">
-                      Formato reconhecido: campo <code className="bg-white px-1 rounded border">{infoRec.chave}</code>
-                    </div>
-                  )}
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className="font-medium mb-1 text-gray-700">Receitas a Receber</div>
+                <div className="space-y-1">
+                  {renderVariacao('dataVencimentoInicio (camelCase)', recGrupo.camelCase)}
+                  {renderVariacao('data_vencimento_inicio (snake_case)', recGrupo.snakeCase)}
+                  {renderVariacao('Sem filtro de data', recGrupo.semFiltro)}
                 </div>
               </div>
-
-              {/* Despesas */}
-              <div className={`flex items-start gap-3 p-3 rounded border ${okDesp ? 'bg-green-50 border-green-200' : semPermissaoDesp ? 'bg-orange-50 border-orange-200' : semDadosDesp ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'}`}>
-                <span className="text-lg mt-0.5">{okDesp ? '✅' : semPermissaoDesp ? '🔒' : semDadosDesp ? '⚠️' : '❌'}</span>
-                <div>
-                  <div className="font-medium">
-                    Despesas — {okDesp ? `${infoDesp!.quantidade} item(s) encontrado(s)` : semPermissaoDesp ? 'Permissão negada (403)' : semDadosDesp ? 'Sem lançamentos neste período' : `Erro HTTP ${statusDesp}`}
-                  </div>
-                  {semDadosDesp && statusDesp === 404 && (
-                    <div className="text-xs text-yellow-700 mt-0.5">
-                      HTTP 404 = período sem registros no CA. Tente outro mês que tenha despesas cadastradas.
-                    </div>
-                  )}
-                  {okDesp && infoDesp && (
-                    <div className="text-xs text-gray-600 mt-0.5">
-                      Formato reconhecido: campo <code className="bg-white px-1 rounded border">{infoDesp.chave}</code>
-                    </div>
-                  )}
+              <div>
+                <div className="font-medium mb-1 text-gray-700">Despesas a Pagar</div>
+                <div className="space-y-1">
+                  {renderVariacao('dataVencimentoInicio (camelCase)', despGrupo.camelCase)}
+                  {renderVariacao('data_vencimento_inicio (snake_case)', despGrupo.snakeCase)}
+                  {renderVariacao('Sem filtro de data', despGrupo.semFiltro)}
                 </div>
               </div>
-
-              {/* Campos do primeiro item quando há dados */}
-              {infoRec && infoRec.quantidade > 0 && (() => {
-                const d = rec.corpo as Record<string, unknown>;
-                const arr = (Array.isArray(d[infoRec.chave]) ? d[infoRec.chave] : d) as Record<string, unknown>[];
-                const primeiro = arr[0] ?? {};
-                const chaves = Object.keys(primeiro);
-                return (
-                  <div className="p-3 bg-gray-50 border border-gray-200 rounded text-xs">
-                    <div className="font-medium text-gray-600 mb-1">Campos do primeiro item de receita:</div>
-                    <div className="font-mono text-gray-500 break-all">{chaves.join(' · ')}</div>
-                    {primeiro.valor !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valor</b>: {String(primeiro.valor)}</div>}
-                    {primeiro.valorTotal !== undefined && <div className="mt-1 text-green-700">✓ campo <b>valorTotal</b>: {String(primeiro.valorTotal)}</div>}
-                    {primeiro.categoria !== undefined && <div className="mt-1 text-green-700">✓ campo <b>categoria</b>: {JSON.stringify(primeiro.categoria)}</div>}
-                  </div>
-                );
-              })()}
             </div>
           );
         })()}</div>

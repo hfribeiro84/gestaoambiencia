@@ -274,6 +274,8 @@ export async function calcularDRE(
   const { arvore, mapaLinhas } = montarArvore(categoriasDb, meses);
 
   const naoMapeadasSet = new Set<string>();
+  const naoMapeadasReceitaMes = new Map<string, number>();
+  const naoMapeadasDespesaMes = new Map<string, number>();
   const chaveMesesSet = new Set(meses.map(({ mes, ano }) => chave(mes, ano)));
 
   async function processarEmpresa(conta: 'ass' | 'netr', mapeamento: Map<string, string>) {
@@ -286,6 +288,8 @@ export async function calcularDRE(
       const catId = mapeamento.get(lanc.categoria);
       if (!catId) {
         if (lanc.categoria) naoMapeadasSet.add(lanc.categoria);
+        const mapa = lanc.tipo === 'receita' ? naoMapeadasReceitaMes : naoMapeadasDespesaMes;
+        mapa.set(chaveMes, (mapa.get(chaveMes) ?? 0) + Math.abs(lanc.valor));
         continue;
       }
 
@@ -311,6 +315,13 @@ export async function calcularDRE(
   const receitaBruta12m = totais.receitaBruta.reduce((acc, v) => acc + v.valor, 0);
   aplicarPercentuais(arvore, receitaBruta12m);
 
+  const naoMapeadasReceita = meses.map(({ mes, ano }) => ({
+    mes, ano, valor: naoMapeadasReceitaMes.get(chave(mes, ano)) ?? 0,
+  }));
+  const naoMapeadasDespesa = meses.map(({ mes, ano }) => ({
+    mes, ano, valor: naoMapeadasDespesaMes.get(chave(mes, ano)) ?? 0,
+  }));
+
   return {
     empresa,
     mesRef,
@@ -319,5 +330,7 @@ export async function calcularDRE(
     categorias: arvore,
     totais,
     naoMapeadas: Array.from(naoMapeadasSet).sort(),
+    naoMapeadasReceita,
+    naoMapeadasDespesa,
   };
 }

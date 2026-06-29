@@ -156,6 +156,53 @@ export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promis
   }
 }
 
+/**
+ * Busca lançamentos para o extrato de um mês específico.
+ * Usa janela expandida (mês anterior + seguinte) e filtra pelo dataPagamento
+ * dentro do mês alvo, para capturar pagamentos que venceram em outro mês.
+ */
+export async function buscarLancamentosExtrato(
+  empresa: ContaCA,
+  de: string,
+  ate: string,
+): Promise<LancamentoCA[]> {
+  // Janela expandida: 1 mês antes e 1 mês depois
+  const dataInicio = new Date(de);
+  dataInicio.setMonth(dataInicio.getMonth() - 1);
+  const dataFim = new Date(ate);
+  dataFim.setMonth(dataFim.getMonth() + 1);
+
+  const deExt = dataInicio.toISOString().slice(0, 10);
+  const ateExt = dataFim.toISOString().slice(0, 10);
+
+  const [itensReceita, itensDespesa] = await Promise.all([
+    buscarPaginado(empresa, EP_RECEITAS, { dataVencimentoInicio: deExt, dataVencimentoFim: ateExt }),
+    buscarPaginado(empresa, EP_DESPESAS, { dataVencimentoInicio: deExt, dataVencimentoFim: ateExt }),
+  ]);
+
+  const mapearItem = (item: Record<string, unknown>, tipo: 'receita' | 'despesa'): LancamentoCA => ({
+    id: extrairId(item),
+    categoria: extrairCategoria(item),
+    valor: extrairValor(item),
+    dataVencimento: extrairDataVencimento(item),
+    dataPagamento: extrairDataPagamento(item),
+    situacao: extrairSituacao(item),
+    descricao: extrairDescricao(item),
+    tipo,
+  });
+
+  const todos: LancamentoCA[] = [
+    ...itensReceita.map((i) => mapearItem(i, 'receita')),
+    ...itensDespesa.map((i) => mapearItem(i, 'despesa')),
+  ];
+
+  // Filtra por dataPagamento dentro da janela alvo; se não pago, usa dataVencimento
+  return todos.filter((l) => {
+    const dataRef = l.dataPagamento ?? l.dataVencimento;
+    return dataRef >= de && dataRef <= ate;
+  });
+}
+
 /** Busca transferências entre contas financeiras no período. */
 export async function buscarTransferencias(
   empresa: ContaCA,

@@ -67,6 +67,15 @@ export interface DadosDRE {
   categorias: LinhaDRE[];
   totais: TotaisCalculados;
   naoMapeadas: string[];
+  naoMapeadasReceita: ValorMes[];
+  naoMapeadasDespesa: ValorMes[];
+}
+
+export interface CategoriaCA {
+  nome: string;
+  tipo: 'receita' | 'despesa';
+  total: number;
+  count: number;
 }
 
 export interface DreSnapshot {

@@ -51,6 +51,7 @@ interface ResultadoConferencia {
   emitenteNome?: string;
   emitenteCnpj?: string;
   cidadeEmissaoCA?: string;
+  amostraClientesCA?: string[];
   camposCA?: string[];
 }
 
@@ -698,25 +699,28 @@ export function ConferenciaNF() {
           )}
 
           {/* Diagnóstico: identifica a conta do Conta Azul realmente conectada.
-              A lista de NFS-e não traz o prestador, mas traz o MUNICÍPIO de emissão
-              (atributo do emitente). Se o município não for o da empresa selecionada,
-              o token conectado é da conta errada (ASS x NETR) — basta reconectar. */}
-          {resultado.totalContaAzul > 0 && (resultado.emitenteNome || resultado.emitenteCnpj || resultado.cidadeEmissaoCA) && (
+              A lista de NFS-e não traz o prestador, então usamos o município de
+              emissão (atributo do emitente) e uma amostra de clientes — assim dá
+              para reconhecer se o token conectado é da conta certa (ASS x NETR). */}
+          {resultado.totalContaAzul > 0 && (
             <div className="mb-3 p-3 rounded border text-sm bg-blue-50 border-blue-200 text-blue-900">
-              <strong>Notas vindas da conta Conta Azul de:</strong>{' '}
-              {resultado.emitenteNome ?? (resultado.cidadeEmissaoCA ? `município de ${resultado.cidadeEmissaoCA}` : '—')}
-              {resultado.emitenteCnpj && <span className="text-blue-700"> (CNPJ {formatCnpj(resultado.emitenteCnpj)})</span>}
-              <div className="text-xs text-blue-700 mt-1">
-                Confirme que corresponde à empresa <strong>{empresa === 'ass' ? 'Ambiência' : 'NETResíduos'}</strong>.
-                Se for a outra empresa, vá em <strong>Integrações → Desconectar</strong>, e reconecte fazendo login
-                na conta do Conta Azul da empresa correta (a tela de login do Conta Azul vai aparecer).
+              <strong>De qual conta do Conta Azul vieram estas {resultado.totalContaAzul} notas?</strong>
+              <div className="mt-1 space-y-0.5 text-blue-900">
+                {resultado.emitenteNome && (
+                  <div>Emitente: <strong>{resultado.emitenteNome}</strong>
+                    {resultado.emitenteCnpj && <span> (CNPJ {formatCnpj(resultado.emitenteCnpj)})</span>}
+                  </div>
+                )}
+                {resultado.cidadeEmissaoCA && <div>Município de emissão: <strong>{resultado.cidadeEmissaoCA}</strong></div>}
+                {resultado.amostraClientesCA && resultado.amostraClientesCA.length > 0 && (
+                  <div>Clientes nessas notas: {resultado.amostraClientesCA.join(' · ')}</div>
+                )}
               </div>
-            </div>
-          )}
-          {resultado.totalContaAzul > 0 && !resultado.emitenteNome && !resultado.emitenteCnpj && !resultado.cidadeEmissaoCA && resultado.camposCA && (
-            <div className="mb-3 p-3 rounded border text-xs bg-amber-50 border-amber-200 text-amber-800">
-              Não foi possível identificar a empresa emitente automaticamente. Campos retornados pelo Conta Azul:{' '}
-              <code className="break-all">{resultado.camposCA.join(', ')}</code>
+              <div className="text-xs text-blue-700 mt-2">
+                Confirme que corresponde à empresa <strong>{empresa === 'ass' ? 'Ambiência' : 'NETResíduos'}</strong>.
+                Se forem dados da outra empresa, vá em <strong>Integrações → Desconectar</strong> e reconecte fazendo
+                login na conta do Conta Azul da empresa correta (a tela de login do Conta Azul vai aparecer).
+              </div>
             </div>
           )}
 

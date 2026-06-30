@@ -103,6 +103,15 @@ function anexarDiagnosticoCA(resultado: ResultadoConferencia, nfsEmitidas: NfEmi
   }
   resultado.cidadeEmissaoCA = [...porCidade.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
+  // Amostra de até 5 clientes distintos — identificador garantido da conta.
+  const clientes: string[] = [];
+  for (const nf of nfsEmitidas) {
+    const nome = (nf.cliente ?? '').trim();
+    if (nome && !clientes.includes(nome)) clientes.push(nome);
+    if (clientes.length >= 5) break;
+  }
+  resultado.amostraClientesCA = clientes;
+
   resultado.camposCA = nfsEmitidas[0]?._camposCrus;
 }
 

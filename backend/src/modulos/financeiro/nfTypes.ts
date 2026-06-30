@@ -78,6 +78,9 @@ export interface ResultadoConferencia {
   // Município de emissão dominante das notas (atributo do emitente). Distingue
   // ASS x NETR quando ficam em cidades diferentes.
   cidadeEmissaoCA?: string;
+  // Amostra de nomes de clientes das notas do CA — identificador garantido
+  // (nome_cliente sempre presente) para o usuário reconhecer a empresa conectada.
+  amostraClientesCA?: string[];
   // Diagnóstico: nomes dos campos crus da resposta do CA (quando o emitente não
   // for identificável automaticamente).
   camposCA?: string[];

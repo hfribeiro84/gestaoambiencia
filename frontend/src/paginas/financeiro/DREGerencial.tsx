@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 
 type EmpresaDRE = 'ass' | 'netr' | 'consolidado';
 type TipoCategoria = 'receita' | 'deducao' | 'custo' | 'despesa' | 'financeiro' | 'divisao';
+type FormulaSubtotal = 'receita_liquida' | 'resultado_operacional' | 'resultado_liquido' | 'fluxo_caixa_livre';
 type Aba = 'dre' | 'extrato' | 'historico' | 'configuracoes';
 
 interface ValorMes { mes: number; ano: number; valor: number; }
@@ -70,6 +71,16 @@ interface DreMapeamento {
   categoria_id: string;
   categoria_nome?: string;
 }
+
+interface DreSubtotal {
+  id: string;
+  nome: string;
+  formula: FormulaSubtotal;
+  apos_tipo: TipoCategoria;
+  ordem: number;
+}
+
+type SubtotalPatch = Partial<{ nome: string; formula: FormulaSubtotal; apos_tipo: TipoCategoria; ordem: number }>;
 
 interface CategoriaCA {
   nome: string;
@@ -190,9 +201,7 @@ export function DREGerencial() {
   const [carregandoConfig, setCarregandoConfig] = useState(false);
   const [carregandoCatsCA, setCarregandoCatsCA] = useState(false);
   const [erroConfig, setErroConfig] = useState('');
-  const [novoNomeCA, setNovoNomeCA] = useState('');
-  const [novaCategoriaId, setNovaCategoriaId] = useState('');
-  const [salvandoMap, setSalvandoMap] = useState(false);
+  const [subtotais, setSubtotais] = useState<DreSubtotal[]>([]);
 
   // ── Carregar último snapshot ao mudar empresa ──────────────────────────────
   const carregarSnapshot = useCallback(async () => {
@@ -295,12 +304,14 @@ export function DREGerencial() {
     setErroConfig('');
     const empresaConfig = empresa === 'consolidado' ? 'ass' : empresa;
     try {
-      const [cats, maps] = await Promise.all([
+      const [cats, maps, subs] = await Promise.all([
         api<DreCategoria[]>(`/api/financeiro/dre/categorias`),
         api<DreMapeamento[]>(`/api/financeiro/dre/mapeamento/${empresaConfig}`),
+        api<DreSubtotal[]>(`/api/financeiro/dre/subtotais`),
       ]);
       setCategorias(cats);
       setMapeamentos(maps);
+      setSubtotais(subs);
     } catch (e) {
       setErroConfig((e as Error).message);
     } finally {
@@ -325,25 +336,10 @@ export function DREGerencial() {
     if (aba === 'configuracoes') carregarConfig();
   }, [aba, empresa, carregarConfig]);
 
-  // ── Adicionar mapeamento ───────────────────────────────────────────────────
-  async function adicionarMapeamento() {
-    if (!novoNomeCA.trim() || !novaCategoriaId) return;
-    const empresaConfig = empresa === 'consolidado' ? 'ass' : empresa;
-    setSalvandoMap(true);
-    try {
-      await api<DreMapeamento>(`/api/financeiro/dre/mapeamento/${empresaConfig}`, {
-        method: 'POST',
-        body: JSON.stringify({ nome_ca: novoNomeCA.trim(), categoria_id: novaCategoriaId }),
-      });
-      setNovoNomeCA('');
-      setNovaCategoriaId('');
-      await carregarConfig();
-    } catch (e) {
-      setErroConfig((e as Error).message);
-    } finally {
-      setSalvandoMap(false);
-    }
-  }
+  // Carrega subtotais na montagem para que a aba DRE já os tenha disponíveis
+  useEffect(() => {
+    api<DreSubtotal[]>('/api/financeiro/dre/subtotais').then(setSubtotais).catch(() => setSubtotais([]));
+  }, []);
 
   // ── Remover mapeamento ─────────────────────────────────────────────────────
   async function removerMapeamento(id: string) {
@@ -383,6 +379,61 @@ export function DREGerencial() {
     setErroConfig('');
     try {
       await api(`/api/financeiro/dre/categorias/${id}`, { method: 'DELETE' });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function salvarTudoEstrutura(
+    catChanges: Map<string, Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>>,
+    subChanges: Map<string, SubtotalPatch>,
+  ) {
+    setErroConfig('');
+    try {
+      for (const [id, patch] of catChanges) {
+        await api(`/api/financeiro/dre/categorias/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      }
+      for (const [id, patch] of subChanges) {
+        await api(`/api/financeiro/dre/subtotais/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      }
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function criarSubtotal(dados: { nome: string; formula: FormulaSubtotal; apos_tipo: TipoCategoria }) {
+    setErroConfig('');
+    try {
+      await api('/api/financeiro/dre/subtotais', { method: 'POST', body: JSON.stringify(dados) });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function excluirSubtotal(id: string) {
+    setErroConfig('');
+    try {
+      await api(`/api/financeiro/dre/subtotais/${id}`, { method: 'DELETE' });
+      await carregarConfig();
+    } catch (e) {
+      setErroConfig((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function adicionarMapeamentoInline(nomeCA: string, categoriaId: string) {
+    const empresaConfig = empresa === 'consolidado' ? 'ass' : empresa;
+    try {
+      await api<DreMapeamento>(`/api/financeiro/dre/mapeamento/${empresaConfig}`, {
+        method: 'POST',
+        body: JSON.stringify({ nome_ca: nomeCA, categoria_id: categoriaId }),
+      });
       await carregarConfig();
     } catch (e) {
       setErroConfig((e as Error).message);
@@ -471,6 +522,7 @@ export function DREGerencial() {
           mostrarResumo={mostrarResumo}
           onGerarResumo={gerarResumo}
           onFecharResumo={() => setMostrarResumo(false)}
+          subtotais={subtotais}
         />
       )}
 
@@ -508,16 +560,15 @@ export function DREGerencial() {
           carregando={carregandoConfig}
           carregandoCatsCA={carregandoCatsCA}
           erro={erroConfig}
-          novoNomeCA={novoNomeCA}
-          novaCategoriaId={novaCategoriaId}
-          salvando={salvandoMap}
-          onSetNomeCA={setNovoNomeCA}
-          onSetCategoriaId={setNovaCategoriaId}
-          onAdicionar={adicionarMapeamento}
+          subtotais={subtotais}
           onRemover={removerMapeamento}
+          onAdicionarMapeamento={adicionarMapeamentoInline}
           onCriarCategoria={criarCategoria}
           onEditarCategoria={editarCategoria}
           onExcluirCategoria={excluirCategoria}
+          onCriarSubtotal={criarSubtotal}
+          onExcluirSubtotal={excluirSubtotal}
+          onSalvarTudoEstrutura={salvarTudoEstrutura}
         />
       )}
     </div>
@@ -538,12 +589,14 @@ interface AbaDREProps {
   mostrarResumo: boolean;
   onGerarResumo: () => void;
   onFecharResumo: () => void;
+  subtotais: DreSubtotal[];
 }
 
 function AbaDRE({
   mes, ano, setMes, setAno, snapshot, carregando, calculando, erro,
   expandidos, onToggle, onCalcular,
   resumo, carregandoResumo, erroResumo, mostrarResumo, onGerarResumo, onFecharResumo,
+  subtotais,
 }: AbaDREProps) {
   const dados = snapshot?.dados ?? null;
   const meses = dados?.meses ?? [];
@@ -702,6 +755,7 @@ function AbaDRE({
                   onToggle={onToggle}
                   naoMapeadasReceita={dados.naoMapeadasReceita ?? []}
                   naoMapeadasDespesa={dados.naoMapeadasDespesa ?? []}
+                  subtotais={subtotais}
                 />
               </tbody>
             </table>
@@ -821,20 +875,8 @@ interface TabelaDREProps {
   onToggle: (id: string) => void;
   naoMapeadasReceita: ValorMes[];
   naoMapeadasDespesa: ValorMes[];
+  subtotais: DreSubtotal[];
 }
-
-const LINHAS_CALCULADAS_APOS: Record<string, string> = {
-  deducao: 'receita_liquida',
-  financeiro: 'resultado_liquido',
-  divisao: 'fluxo_caixa_livre',
-};
-
-const NOME_CALCULADO: Record<string, string> = {
-  receita_liquida: '= Receita Líquida',
-  resultado_operacional: '= Resultado Operacional',
-  resultado_liquido: '= Resultado Líquido',
-  fluxo_caixa_livre: '= Fluxo de Caixa Livre',
-};
 
 const LABEL_TIPO: Record<TipoCategoria, string> = {
   receita: 'Receita Bruta (Serviços)',
@@ -845,7 +887,7 @@ const LABEL_TIPO: Record<TipoCategoria, string> = {
   divisao: 'Divisão de Resultados',
 };
 
-function TabelaDRE({ categorias, totais, meses, expandidos, onToggle, naoMapeadasReceita, naoMapeadasDespesa }: TabelaDREProps) {
+function TabelaDRE({ categorias, totais, meses, expandidos, onToggle, naoMapeadasReceita, naoMapeadasDespesa, subtotais }: TabelaDREProps) {
   const valoresCalculados: Record<string, ValorMes[]> = {
     receita_liquida: totais.receitaLiquida,
     resultado_operacional: totais.resultadoOperacional,
@@ -853,6 +895,13 @@ function TabelaDRE({ categorias, totais, meses, expandidos, onToggle, naoMapeada
     fluxo_caixa_livre: totais.fluxoCaixaLivre,
   };
   const receitaBrutaTotal12 = somaTotal(totais.receitaBruta);
+
+  const subtotaisPorTipo = new Map<TipoCategoria, DreSubtotal[]>();
+  for (const sub of subtotais) {
+    const list = subtotaisPorTipo.get(sub.apos_tipo) ?? [];
+    list.push(sub);
+    subtotaisPorTipo.set(sub.apos_tipo, list);
+  }
 
   const ordem: TipoCategoria[] = ['receita', 'deducao', 'custo', 'despesa', 'financeiro', 'divisao'];
   const porTipo: Record<TipoCategoria, LinhaDRE[]> = {
@@ -931,27 +980,14 @@ function TabelaDRE({ categorias, totais, meses, expandidos, onToggle, naoMapeada
       }
     }
 
-    // Linhas calculadas após grupos
-    const calcId = LINHAS_CALCULADAS_APOS[tipo];
-    if (calcId) {
+    // Subtotais configuráveis após este grupo de tipos
+    const subs = (subtotaisPorTipo.get(tipo) ?? []).slice().sort((a, b) => a.ordem - b.ordem);
+    for (const sub of subs) {
       rows.push(
         <LinhaCalculadaRow
-          key={`calc-${calcId}`}
-          nome={NOME_CALCULADO[calcId]}
-          valores={valoresCalculados[calcId] ?? []}
-          meses={meses}
-          receitaBrutaTotal12={receitaBrutaTotal12}
-        />
-      );
-    }
-
-    // Resultado operacional aparece após despesas
-    if (tipo === 'despesa') {
-      rows.push(
-        <LinhaCalculadaRow
-          key="calc-resultado_operacional"
-          nome={NOME_CALCULADO.resultado_operacional}
-          valores={valoresCalculados.resultado_operacional ?? []}
+          key={`subtotal-${sub.id}`}
+          nome={sub.nome}
+          valores={valoresCalculados[sub.formula] ?? []}
           meses={meses}
           receitaBrutaTotal12={receitaBrutaTotal12}
         />
@@ -1244,6 +1280,15 @@ function AbaHistorico({ snapshots, carregando, onExcluir }: AbaHistoricoProps) {
 
 // ─── Aba Configurações ────────────────────────────────────────────────────────
 
+type CatPatch = Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>;
+
+const FORMULA_LABEL: Record<FormulaSubtotal, string> = {
+  receita_liquida: 'Receita Líquida',
+  resultado_operacional: 'Resultado Operacional',
+  resultado_liquido: 'Resultado Líquido',
+  fluxo_caixa_livre: 'Fluxo de Caixa Livre',
+};
+
 interface AbaConfiguracoesProps {
   empresa: EmpresaDRE;
   categorias: DreCategoria[];
@@ -1252,16 +1297,15 @@ interface AbaConfiguracoesProps {
   carregando: boolean;
   carregandoCatsCA: boolean;
   erro: string;
-  novoNomeCA: string;
-  novaCategoriaId: string;
-  salvando: boolean;
-  onSetNomeCA: (v: string) => void;
-  onSetCategoriaId: (v: string) => void;
-  onAdicionar: () => void;
+  subtotais: DreSubtotal[];
   onRemover: (id: string) => void;
+  onAdicionarMapeamento: (nomeCA: string, categoriaId: string) => Promise<void>;
   onCriarCategoria: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
-  onEditarCategoria: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onEditarCategoria: (id: string, patch: CatPatch) => Promise<void>;
   onExcluirCategoria: (id: string) => Promise<void>;
+  onCriarSubtotal: (dados: { nome: string; formula: FormulaSubtotal; apos_tipo: TipoCategoria }) => Promise<void>;
+  onExcluirSubtotal: (id: string) => Promise<void>;
+  onSalvarTudoEstrutura: (catChanges: Map<string, CatPatch>, subChanges: Map<string, SubtotalPatch>) => Promise<void>;
 }
 
 // Reconstrói a árvore (pai_id) a partir da lista plana retornada pela API, ordenando por `ordem`.
@@ -1300,14 +1344,67 @@ function acharCategorias(cats: DreCategoria[], nivel = 0): Array<{ id: string; l
 
 function AbaConfiguracoes({
   empresa, categorias, mapeamentos, catsCA, carregando, carregandoCatsCA, erro,
-  novoNomeCA, novaCategoriaId, salvando,
-  onSetNomeCA, onSetCategoriaId, onAdicionar, onRemover,
-  onCriarCategoria, onEditarCategoria, onExcluirCategoria,
+  subtotais, onRemover, onAdicionarMapeamento,
+  onCriarCategoria, onExcluirCategoria, onCriarSubtotal, onExcluirSubtotal, onSalvarTudoEstrutura,
 }: AbaConfiguracoesProps) {
-  const arvoreCategorias = construirArvoreCategorias(categorias);
+  const [localCats, setLocalCats] = useState<DreCategoria[]>(categorias);
+  const [pendingEdits, setPendingEdits] = useState<Map<string, CatPatch>>(new Map());
+  const [localSubtotais, setLocalSubtotais] = useState<DreSubtotal[]>(subtotais);
+  const [pendingSubtotalEdits, setPendingSubtotalEdits] = useState<Map<string, SubtotalPatch>>(new Map());
+  const [salvandoEstrutura, setSalvandoEstrutura] = useState(false);
+
+  useEffect(() => {
+    setLocalCats(categorias);
+    setPendingEdits(new Map());
+  }, [categorias]);
+
+  useEffect(() => {
+    setLocalSubtotais(subtotais);
+    setPendingSubtotalEdits(new Map());
+  }, [subtotais]);
+
+  const arvoreCategorias = construirArvoreCategorias(localCats);
   const catsPlanas = acharCategorias(arvoreCategorias);
   const nomesMapeados = new Set(mapeamentos.map((m) => m.nome_ca));
   const catsCAnaoMapeadas = catsCA.filter((c) => !nomesMapeados.has(c.nome));
+
+  function handleEditarLocal(id: string, patch: CatPatch) {
+    setLocalCats((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setPendingEdits((prev) => {
+      const next = new Map(prev);
+      next.set(id, { ...(next.get(id) ?? {}), ...patch });
+      return next;
+    });
+  }
+
+  function handleEditarSubtotalLocal(id: string, patch: SubtotalPatch) {
+    setLocalSubtotais((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+    setPendingSubtotalEdits((prev) => {
+      const next = new Map(prev);
+      next.set(id, { ...(next.get(id) ?? {}), ...patch });
+      return next;
+    });
+  }
+
+  const pendingCount = pendingEdits.size + pendingSubtotalEdits.size;
+
+  async function salvarEstrutura() {
+    setSalvandoEstrutura(true);
+    try {
+      await onSalvarTudoEstrutura(pendingEdits, pendingSubtotalEdits);
+    } catch {
+      // erro exibido pelo pai
+    } finally {
+      setSalvandoEstrutura(false);
+    }
+  }
+
+  function descartarAlteracoes() {
+    setLocalCats(categorias);
+    setPendingEdits(new Map());
+    setLocalSubtotais(subtotais);
+    setPendingSubtotalEdits(new Map());
+  }
 
   const hoje = new Date();
   const [diag, setDiag] = useState<Record<string, unknown> | null>(null);
@@ -1344,12 +1441,27 @@ function AbaConfiguracoes({
         {empresa === 'consolidado' && ' (Editando configurações da ASS; NETR tem configuração separada.)'}
       </div>
 
-      {/* Estrutura da DRE */}
+      {/* Estrutura da DRE + Mapeamentos CA (unificado) */}
       <EstruturaDRE
         arvore={arvoreCategorias}
+        mapeamentos={mapeamentos}
+        catsCA={catsCA}
+        carregandoCatsCA={carregandoCatsCA}
+        catsCAnaoMapeadas={catsCAnaoMapeadas}
+        catsPlanas={catsPlanas}
+        pendingCount={pendingCount}
+        salvando={salvandoEstrutura}
+        onSalvar={salvarEstrutura}
+        onDescartar={descartarAlteracoes}
         onCriar={onCriarCategoria}
-        onEditar={onEditarCategoria}
+        onEditar={handleEditarLocal}
         onExcluir={onExcluirCategoria}
+        onAdicionarMapeamento={onAdicionarMapeamento}
+        onRemoverMapeamento={onRemover}
+        subtotais={localSubtotais}
+        onEditarSubtotal={handleEditarSubtotalLocal}
+        onCriarSubtotal={onCriarSubtotal}
+        onExcluirSubtotal={onExcluirSubtotal}
       />
 
       {/* Diagnóstico CA */}
@@ -1436,164 +1548,13 @@ function AbaConfiguracoes({
               {renderLinha('Despesas', desp)}
             </div>
           );
-        })()}</div>
-
-      {/* Mapeamentos existentes */}
-      <div className="bg-white rounded-lg shadow p-5">
-        <h2 className="text-base font-semibold mb-4">Mapeamentos CA → DRE</h2>
-
-        {mapeamentos.length > 0 ? (
-          <div className="overflow-x-auto mb-5">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
-                <tr>
-                  <th className="px-3 py-2 text-left">Categoria no Conta Azul</th>
-                  <th className="px-3 py-2 text-left">Tipo</th>
-                  <th className="px-3 py-2 text-left">Categoria DRE</th>
-                  <th className="px-3 py-2 text-center w-20">Ação</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {mapeamentos.map((m) => {
-                  const catCA = catsCA.find((c) => c.nome === m.nome_ca);
-                  return (
-                    <tr key={m.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 text-gray-800">{m.nome_ca}</td>
-                      <td className="px-3 py-2">
-                        {catCA ? (
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${catCA.tipo === 'receita' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {catCA.tipo}
-                          </span>
-                        ) : <span className="text-gray-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-gray-500">{m.categoria_nome ?? m.categoria_id}</td>
-                      <td className="px-3 py-2 text-center">
-                        <button onClick={() => onRemover(m.id)} className="text-red-400 hover:text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">
-                          Remover
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400 mb-4">Nenhum mapeamento cadastrado ainda.</p>
-        )}
-
-        {/* Formulário */}
-        <div className="border-t pt-4">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">Adicionar mapeamento</h3>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs text-gray-500 mb-1">
-                Categoria do Conta Azul
-                {carregandoCatsCA && <span className="ml-2 text-gray-400">(buscando...)</span>}
-              </label>
-              {catsCA.length > 0 ? (
-                <select
-                  value={novoNomeCA}
-                  onChange={(e) => onSetNomeCA(e.target.value)}
-                  className="w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-slate-500"
-                >
-                  <option value="">Selecione uma categoria CA...</option>
-                  <optgroup label="Receitas">
-                    {catsCA.filter((c) => c.tipo === 'receita').map((c) => (
-                      <option key={c.nome} value={c.nome}>
-                        {c.nome} ({c.count}× · {formatBRLK(c.total)})
-                        {nomesMapeados.has(c.nome) ? ' ✓' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Despesas">
-                    {catsCA.filter((c) => c.tipo === 'despesa').map((c) => (
-                      <option key={c.nome} value={c.nome}>
-                        {c.nome} ({c.count}× · {formatBRLK(c.total)})
-                        {nomesMapeados.has(c.nome) ? ' ✓' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value={novoNomeCA}
-                  onChange={(e) => onSetNomeCA(e.target.value)}
-                  placeholder={carregandoCatsCA ? 'Buscando categorias do CA...' : 'Digite o nome exato da categoria'}
-                  className="w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-slate-500"
-                  disabled={carregandoCatsCA}
-                />
-              )}
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs text-gray-500 mb-1">Categoria DRE</label>
-              <select
-                value={novaCategoriaId}
-                onChange={(e) => onSetCategoriaId(e.target.value)}
-                className="w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-slate-500"
-              >
-                <option value="">Selecione a categoria DRE...</option>
-                {catsPlanas.map((c) => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={onAdicionar}
-              disabled={salvando || !novoNomeCA.trim() || !novaCategoriaId}
-              className="bg-slate-800 text-white px-4 py-2 rounded text-sm font-medium disabled:opacity-50 hover:bg-slate-700 whitespace-nowrap"
-            >
-              {salvando ? 'Salvando...' : 'Adicionar'}
-            </button>
-          </div>
-        </div>
+        })()}
       </div>
-
-      {/* Categorias CA não mapeadas */}
-      {(catsCAnaoMapeadas.length > 0 || carregandoCatsCA) && (
-        <div className="bg-white rounded-lg shadow p-5">
-          <h2 className="text-base font-semibold mb-1">
-            Categorias sem mapeamento
-            {catsCAnaoMapeadas.length > 0 && (
-              <span className="ml-2 text-sm font-normal text-yellow-600">({catsCAnaoMapeadas.length})</span>
-            )}
-          </h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Categorias encontradas no Conta Azul nos últimos 12 meses que ainda não têm mapeamento DRE.
-            Clique em "Mapear" para pré-preencher o formulário.
-          </p>
-
-          {carregandoCatsCA && (
-            <div className="text-sm text-gray-400 animate-pulse">Buscando categorias do Conta Azul...</div>
-          )}
-
-          {!carregandoCatsCA && (
-            <div className="space-y-2">
-              {catsCAnaoMapeadas.map((cat) => (
-                <div key={cat.nome} className="flex items-center gap-3 py-2 px-3 bg-yellow-50 border border-yellow-200 rounded text-sm">
-                  <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${cat.tipo === 'receita' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {cat.tipo}
-                  </span>
-                  <span className="text-yellow-800 flex-1">{cat.nome}</span>
-                  <span className="text-xs text-yellow-600 shrink-0">{cat.count}× · {formatBRLK(cat.total)}</span>
-                  <button
-                    onClick={() => onSetNomeCA(cat.nome)}
-                    className="text-xs text-yellow-700 hover:text-yellow-900 border border-yellow-400 px-3 py-1 rounded hover:bg-yellow-100 shrink-0"
-                  >
-                    Mapear
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-// ─── Estrutura da DRE (árvore de categorias editável) ──────────────────────────
+// ─── Estrutura da DRE + Mapeamentos CA (unificado) ────────────────────────────
 
 const TIPO_LABEL: Record<TipoCategoria, string> = {
   receita: 'Receita', deducao: 'Dedução', custo: 'Custo', despesa: 'Despesa', financeiro: 'Financeiro', divisao: 'Divisão',
@@ -1615,30 +1576,46 @@ function coletarIds(node: DreCategoria): Set<string> {
 
 interface EstruturaDREProps {
   arvore: DreCategoria[];
+  mapeamentos: DreMapeamento[];
+  catsCA: CategoriaCA[];
+  carregandoCatsCA: boolean;
+  catsCAnaoMapeadas: CategoriaCA[];
+  catsPlanas: Array<{ id: string; label: string; nivel: number }>;
+  pendingCount: number;
+  salvando: boolean;
+  onSalvar: () => void;
+  onDescartar: () => void;
   onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
-  onEditar: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onEditar: (id: string, patch: CatPatch) => void;
   onExcluir: (id: string) => Promise<void>;
+  onAdicionarMapeamento: (nomeCA: string, categoriaId: string) => Promise<void>;
+  onRemoverMapeamento: (id: string) => void;
+  subtotais: DreSubtotal[];
+  onEditarSubtotal: (id: string, patch: SubtotalPatch) => void;
+  onCriarSubtotal: (dados: { nome: string; formula: FormulaSubtotal; apos_tipo: TipoCategoria }) => Promise<void>;
+  onExcluirSubtotal: (id: string) => Promise<void>;
 }
 
-function EstruturaDRE({ arvore, onCriar, onEditar, onExcluir }: EstruturaDREProps) {
-  const [formAberto, setFormAberto] = useState<string | null>(null); // id do nó (ou '__raiz__') com formulário de subcategoria aberto
+function EstruturaDRE({
+  arvore, mapeamentos, catsCA, carregandoCatsCA, catsCAnaoMapeadas, catsPlanas,
+  pendingCount, salvando, onSalvar, onDescartar,
+  onCriar, onEditar, onExcluir, onAdicionarMapeamento, onRemoverMapeamento,
+  subtotais, onEditarSubtotal, onCriarSubtotal, onExcluirSubtotal,
+}: EstruturaDREProps) {
+  const [formAberto, setFormAberto] = useState<string | null>(null);
+  const [formSubtotalAberto, setFormSubtotalAberto] = useState(false);
   const [erro, setErro] = useState('');
 
   const opcoesPai = acharCategorias(arvore);
 
-  async function mover(node: DreCategoria, irmaos: DreCategoria[], direcao: -1 | 1) {
+  function mover(node: DreCategoria, irmaos: DreCategoria[], direcao: -1 | 1) {
     const idx = irmaos.findIndex((s) => s.id === node.id);
     const outro = irmaos[idx + direcao];
     if (!outro) return;
-    setErro('');
-    try {
-      const ordemNode = node.ordem;
-      const ordemOutro = outro.ordem;
-      await onEditar(node.id, { ordem: ordemOutro });
-      await onEditar(outro.id, { ordem: ordemNode });
-    } catch (e) {
-      setErro((e as Error).message);
-    }
+    const ordemNode = node.ordem;
+    const ordemOutro = outro.ordem;
+    onEditar(node.id, { ordem: ordemOutro });
+    onEditar(outro.id, { ordem: ordemNode });
   }
 
   async function excluir(node: DreCategoria) {
@@ -1658,17 +1635,40 @@ function EstruturaDRE({ arvore, onCriar, onEditar, onExcluir }: EstruturaDREProp
   return (
     <div className="bg-white rounded-lg shadow p-5">
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-base font-semibold">Estrutura da DRE</h2>
-        <button
-          onClick={() => setFormAberto(formAberto === '__raiz__' ? null : '__raiz__')}
-          className="text-xs text-slate-700 hover:underline border border-slate-300 px-3 py-1 rounded"
-        >
-          + Categoria de nível raiz
-        </button>
+        <h2 className="text-base font-semibold">Estrutura da DRE + Mapeamentos CA</h2>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {pendingCount > 0 && (
+            <>
+              <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                {pendingCount} alteração{pendingCount !== 1 ? 'ões' : ''} não salva{pendingCount !== 1 ? 's' : ''}
+              </span>
+              <button
+                onClick={onDescartar}
+                disabled={salvando}
+                className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 px-3 py-1 rounded"
+              >
+                Descartar
+              </button>
+              <button
+                onClick={onSalvar}
+                disabled={salvando}
+                className="text-xs bg-slate-800 text-white px-3 py-1 rounded disabled:opacity-50 hover:bg-slate-700"
+              >
+                {salvando ? 'Salvando...' : 'Salvar'}
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setFormAberto(formAberto === '__raiz__' ? null : '__raiz__')}
+            className="text-xs text-slate-700 hover:underline border border-slate-300 px-3 py-1 rounded"
+          >
+            + Categoria raiz
+          </button>
+        </div>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        Esta é a estrutura que aparece na aba DRE. Edite o nome clicando nele, reordene com as setas,
-        mude o nível pelo seletor "pai" e adicione ou exclua categorias e subcategorias.
+        Edite a estrutura da DRE e veja quais categorias do Conta Azul estão mapeadas a cada linha.
+        Clique no nome para editar, setas para reordenar. Clique em "Salvar" quando terminar.
       </p>
 
       {erro && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">{erro}</div>}
@@ -1700,12 +1700,86 @@ function EstruturaDRE({ arvore, onCriar, onEditar, onExcluir }: EstruturaDREProp
             onEditar={onEditar}
             onExcluir={excluir}
             onCriar={onCriar}
+            mapeamentos={mapeamentos}
+            catsCA={catsCA}
+            onAdicionarMapeamento={onAdicionarMapeamento}
+            onRemoverMapeamento={onRemoverMapeamento}
           />
         ))}
       </div>
+
+      {/* ── Subtotais configuráveis ──────────────────────────────────────── */}
+      <div className="mt-5 pt-4 border-t">
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700">Linhas de Subtotal</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Linhas calculadas (ex: = Resultado Operacional) que aparecem após cada grupo de categorias. Editáveis e reposicionáveis.
+            </p>
+          </div>
+          <button
+            onClick={() => setFormSubtotalAberto(!formSubtotalAberto)}
+            className="text-xs text-slate-700 hover:underline border border-slate-300 px-3 py-1 rounded shrink-0"
+          >
+            + Subtotal
+          </button>
+        </div>
+        {formSubtotalAberto && (
+          <FormNovaSubtotal onCriar={onCriarSubtotal} onFechar={() => setFormSubtotalAberto(false)} />
+        )}
+        <div className="border rounded-lg divide-y divide-gray-100 mt-2">
+          {subtotais.length === 0 && (
+            <div className="text-sm text-gray-400 text-center py-4">Nenhum subtotal cadastrado.</div>
+          )}
+          {subtotais.map((sub) => {
+            const irmaos = subtotais.filter((s) => s.apos_tipo === sub.apos_tipo).sort((a, b) => a.ordem - b.ordem);
+            return (
+              <NodoSubtotal
+                key={sub.id}
+                sub={sub}
+                irmaos={irmaos}
+                onEditar={onEditarSubtotal}
+                onExcluir={onExcluirSubtotal}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Categorias CA sem mapeamento */}
+      {(catsCAnaoMapeadas.length > 0 || carregandoCatsCA) && (
+        <div className="mt-5 pt-4 border-t">
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">
+            Categorias CA sem mapeamento
+            {catsCAnaoMapeadas.length > 0 && (
+              <span className="ml-2 font-normal text-yellow-600">({catsCAnaoMapeadas.length})</span>
+            )}
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Categorias do Conta Azul ainda não associadas a nenhuma linha da DRE.
+          </p>
+          {carregandoCatsCA && (
+            <div className="text-xs text-gray-400 animate-pulse">Buscando categorias do Conta Azul...</div>
+          )}
+          {!carregandoCatsCA && (
+            <div className="space-y-1.5">
+              {catsCAnaoMapeadas.map((cat) => (
+                <NaoMapeadaItem
+                  key={cat.nome}
+                  cat={cat}
+                  catsPlanas={catsPlanas}
+                  onMapear={onAdicionarMapeamento}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+// ─── Nodo da árvore de categorias ─────────────────────────────────────────────
 
 interface NodoCategoriaProps {
   node: DreCategoria;
@@ -1715,46 +1789,61 @@ interface NodoCategoriaProps {
   formAberto: string | null;
   setFormAberto: (id: string | null) => void;
   onMover: (node: DreCategoria, irmaos: DreCategoria[], direcao: -1 | 1) => void;
-  onEditar: (id: string, patch: Partial<{ nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number; ordem: number }>) => Promise<void>;
+  onEditar: (id: string, patch: CatPatch) => void;
   onExcluir: (node: DreCategoria) => void;
   onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
+  mapeamentos: DreMapeamento[];
+  catsCA: CategoriaCA[];
+  onAdicionarMapeamento: (nomeCA: string, categoriaId: string) => Promise<void>;
+  onRemoverMapeamento: (id: string) => void;
 }
 
 function NodoCategoria({
   node, nivel, irmaos, opcoesPai, formAberto, setFormAberto, onMover, onEditar, onExcluir, onCriar,
+  mapeamentos, catsCA, onAdicionarMapeamento, onRemoverMapeamento,
 }: NodoCategoriaProps) {
   const [editando, setEditando] = useState(false);
   const [nomeEdit, setNomeEdit] = useState(node.nome);
+  const [mapeandoCA, setMapeandoCA] = useState(false);
+  const [novaMapeamentoCA, setNovaMapeamentoCA] = useState('');
+  const [salvandoMap, setSalvandoMap] = useState(false);
 
   const idx = irmaos.findIndex((s) => s.id === node.id);
   const ehPrimeiro = idx === 0;
   const ehUltimo = idx === irmaos.length - 1;
   const idsExcluidos = coletarIds(node);
 
-  async function salvarNome() {
+  const mapeamentosDoNode = mapeamentos.filter((m) => m.categoria_id === node.id);
+  const catsCAlivres = catsCA.filter((c) => !mapeamentosDoNode.some((m) => m.nome_ca === c.nome));
+
+  useEffect(() => { setNomeEdit(node.nome); }, [node.nome]);
+
+  function salvarNome() {
     setEditando(false);
     const nomeLimpo = nomeEdit.trim();
-    if (!nomeLimpo || nomeLimpo === node.nome) {
-      setNomeEdit(node.nome);
-      return;
+    if (!nomeLimpo || nomeLimpo === node.nome) { setNomeEdit(node.nome); return; }
+    onEditar(node.id, { nome: nomeLimpo });
+  }
+
+  async function adicionarMapeamento() {
+    if (!novaMapeamentoCA) return;
+    setSalvandoMap(true);
+    try {
+      await onAdicionarMapeamento(novaMapeamentoCA, node.id);
+      setNovaMapeamentoCA('');
+      setMapeandoCA(false);
+    } finally {
+      setSalvandoMap(false);
     }
-    await onEditar(node.id, { nome: nomeLimpo });
   }
 
   return (
     <div>
+      {/* Linha principal */}
       <div className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50" style={{ paddingLeft: 8 + nivel * 22 }}>
         <div className="flex flex-col shrink-0">
-          <button
-            onClick={() => onMover(node, irmaos, -1)}
-            disabled={ehPrimeiro}
-            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]"
-          >▲</button>
-          <button
-            onClick={() => onMover(node, irmaos, 1)}
-            disabled={ehUltimo}
-            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]"
-          >▼</button>
+          <button onClick={() => onMover(node, irmaos, -1)} disabled={ehPrimeiro} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▲</button>
+          <button onClick={() => onMover(node, irmaos, 1)} disabled={ehUltimo} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▼</button>
         </div>
 
         {editando ? (
@@ -1767,90 +1856,263 @@ function NodoCategoria({
             className="flex-1 min-w-[120px] border rounded px-2 py-1 text-sm"
           />
         ) : (
-          <span
-            onClick={() => setEditando(true)}
-            title="Clique para editar"
-            className="flex-1 min-w-[120px] cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm text-gray-800"
-          >
+          <span onClick={() => setEditando(true)} title="Clique para editar" className="flex-1 min-w-[120px] cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm text-gray-800">
             {node.nome}
           </span>
         )}
 
-        <select
-          value={node.tipo}
-          onChange={(e) => onEditar(node.id, { tipo: e.target.value as TipoCategoria })}
-          className={`text-xs rounded px-1.5 py-1 border-none shrink-0 ${TIPO_COR[node.tipo]}`}
-        >
-          {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
-            <option key={t} value={t}>{TIPO_LABEL[t]}</option>
-          ))}
+        <select value={node.tipo} onChange={(e) => onEditar(node.id, { tipo: e.target.value as TipoCategoria })} className={`text-xs rounded px-1.5 py-1 border-none shrink-0 ${TIPO_COR[node.tipo]}`}>
+          {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
         </select>
 
-        <select
-          value={node.sinal}
-          onChange={(e) => onEditar(node.id, { sinal: Number(e.target.value) })}
-          className="text-xs border rounded px-1.5 py-1 shrink-0 w-12"
-        >
+        <select value={node.sinal} onChange={(e) => onEditar(node.id, { sinal: Number(e.target.value) })} className="text-xs border rounded px-1.5 py-1 shrink-0 w-12">
           <option value={1}>+</option>
           <option value={-1}>−</option>
         </select>
 
-        <select
-          value={node.pai_id ?? ''}
-          onChange={(e) => onEditar(node.id, { pai_id: e.target.value || null })}
-          className="text-xs border rounded px-1.5 py-1 shrink-0 max-w-[180px]"
-          title="Mudar nível (categoria pai)"
-        >
+        <select value={node.pai_id ?? ''} onChange={(e) => onEditar(node.id, { pai_id: e.target.value || null })} className="text-xs border rounded px-1.5 py-1 shrink-0 max-w-[180px]" title="Mudar nível (categoria pai)">
           <option value="">— Nível raiz —</option>
-          {opcoesPai.filter((o) => !idsExcluidos.has(o.id)).map((o) => (
-            <option key={o.id} value={o.id}>{o.label}</option>
-          ))}
+          {opcoesPai.filter((o) => !idsExcluidos.has(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
 
-        <button
-          onClick={() => setFormAberto(formAberto === node.id ? null : node.id)}
-          className="text-xs text-slate-600 hover:underline shrink-0"
-        >
-          + Sub
-        </button>
-        <button
-          onClick={() => onExcluir(node)}
-          className="text-xs text-red-400 hover:text-red-600 shrink-0"
-        >
-          Excluir
-        </button>
+        <button onClick={() => setFormAberto(formAberto === node.id ? null : node.id)} className="text-xs text-slate-600 hover:underline shrink-0">+ Sub</button>
+        <button onClick={() => onExcluir(node)} className="text-xs text-red-400 hover:text-red-600 shrink-0">Excluir</button>
+      </div>
+
+      {/* Mapeamentos CA desta categoria */}
+      <div style={{ paddingLeft: 8 + nivel * 22 + 28 }} className="pb-1.5">
+        {mapeamentosDoNode.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1">
+            {mapeamentosDoNode.map((m) => {
+              const catCA = catsCA.find((c) => c.nome === m.nome_ca);
+              return (
+                <span key={m.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-full text-slate-700">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${catCA?.tipo === 'receita' ? 'bg-green-500' : 'bg-red-500'}`} />
+                  {m.nome_ca}
+                  <button onClick={() => onRemoverMapeamento(m.id)} className="ml-0.5 text-slate-400 hover:text-red-500 leading-none">×</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {mapeandoCA ? (
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <select value={novaMapeamentoCA} onChange={(e) => setNovaMapeamentoCA(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 max-w-xs">
+              <option value="">Categoria CA...</option>
+              {catsCAlivres.map((c) => <option key={c.nome} value={c.nome}>{c.nome} ({c.tipo}, {c.count}×)</option>)}
+            </select>
+            <button onClick={adicionarMapeamento} disabled={!novaMapeamentoCA || salvandoMap} className="text-xs bg-slate-700 text-white px-2 py-1 rounded disabled:opacity-50 hover:bg-slate-600">
+              {salvandoMap ? '...' : 'Mapear'}
+            </button>
+            <button onClick={() => { setMapeandoCA(false); setNovaMapeamentoCA(''); }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+        ) : (
+          <button onClick={() => setMapeandoCA(true)} className="text-xs text-gray-400 hover:text-slate-600 px-1.5 py-0.5 rounded border border-dashed border-gray-300 hover:border-slate-400">
+            + Mapear CA
+          </button>
+        )}
       </div>
 
       {formAberto === node.id && (
         <div style={{ paddingLeft: 8 + (nivel + 1) * 22 }}>
-          <FormNovaCategoria
-            paiId={node.id}
-            tipoDefault={node.tipo}
-            sinalDefault={node.sinal}
-            onCriar={onCriar}
-            onFechar={() => setFormAberto(null)}
-          />
+          <FormNovaCategoria paiId={node.id} tipoDefault={node.tipo} sinalDefault={node.sinal} onCriar={onCriar} onFechar={() => setFormAberto(null)} />
         </div>
       )}
 
       {(node.subcategorias ?? []).map((sub) => (
         <NodoCategoria
-          key={sub.id}
-          node={sub}
-          nivel={nivel + 1}
-          irmaos={node.subcategorias!}
-          opcoesPai={opcoesPai}
-          formAberto={formAberto}
-          setFormAberto={setFormAberto}
-          onMover={onMover}
-          onEditar={onEditar}
-          onExcluir={onExcluir}
-          onCriar={onCriar}
+          key={sub.id} node={sub} nivel={nivel + 1} irmaos={node.subcategorias!}
+          opcoesPai={opcoesPai} formAberto={formAberto} setFormAberto={setFormAberto}
+          onMover={onMover} onEditar={onEditar} onExcluir={onExcluir} onCriar={onCriar}
+          mapeamentos={mapeamentos} catsCA={catsCA}
+          onAdicionarMapeamento={onAdicionarMapeamento} onRemoverMapeamento={onRemoverMapeamento}
         />
       ))}
     </div>
   );
 }
+
+// ─── Item de categoria CA não mapeada ─────────────────────────────────────────
+
+function NaoMapeadaItem({
+  cat, catsPlanas, onMapear,
+}: {
+  cat: CategoriaCA;
+  catsPlanas: Array<{ id: string; label: string; nivel: number }>;
+  onMapear: (nomeCA: string, categoriaId: string) => Promise<void>;
+}) {
+  const [mapeando, setMapeando] = useState(false);
+  const [categoriaId, setCategoriaId] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    if (!categoriaId) return;
+    setSalvando(true);
+    try { await onMapear(cat.nome, categoriaId); setMapeando(false); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <div className={`flex flex-wrap items-center gap-2 py-1.5 px-3 rounded text-sm border ${mapeando ? 'bg-slate-50 border-slate-300' : 'bg-yellow-50 border-yellow-200'}`}>
+      <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${cat.tipo === 'receita' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+        {cat.tipo}
+      </span>
+      <span className="text-yellow-800 flex-1 font-medium">{cat.nome}</span>
+      <span className="text-xs text-yellow-600 shrink-0">{cat.count}× · {formatBRLK(cat.total)}</span>
+      {mapeando ? (
+        <>
+          <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 min-w-[180px]">
+            <option value="">Categoria DRE...</option>
+            {catsPlanas.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          <button onClick={salvar} disabled={!categoriaId || salvando} className="text-xs bg-slate-700 text-white px-3 py-1 rounded disabled:opacity-50 shrink-0">
+            {salvando ? '...' : 'Salvar'}
+          </button>
+          <button onClick={() => { setMapeando(false); setCategoriaId(''); }} className="text-xs text-gray-400 hover:text-gray-600 shrink-0">✕</button>
+        </>
+      ) : (
+        <button onClick={() => setMapeando(true)} className="text-xs text-yellow-700 hover:text-yellow-900 border border-yellow-400 px-3 py-1 rounded hover:bg-yellow-100 shrink-0">
+          Mapear →
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Nodo de subtotal ─────────────────────────────────────────────────────────
+
+interface NodoSubtotalProps {
+  sub: DreSubtotal;
+  irmaos: DreSubtotal[];
+  onEditar: (id: string, patch: SubtotalPatch) => void;
+  onExcluir: (id: string) => Promise<void>;
+}
+
+function NodoSubtotal({ sub, irmaos, onEditar, onExcluir }: NodoSubtotalProps) {
+  const [editando, setEditando] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState(sub.nome);
+
+  useEffect(() => { setNomeEdit(sub.nome); }, [sub.nome]);
+
+  const idx = irmaos.findIndex((s) => s.id === sub.id);
+  const ehPrimeiro = idx === 0;
+  const ehUltimo = idx === irmaos.length - 1;
+
+  function mover(direcao: -1 | 1) {
+    const outro = irmaos[idx + direcao];
+    if (!outro) return;
+    onEditar(sub.id, { ordem: outro.ordem });
+    onEditar(outro.id, { ordem: sub.ordem });
+  }
+
+  function salvarNome() {
+    setEditando(false);
+    const nomeLimpo = nomeEdit.trim();
+    if (!nomeLimpo || nomeLimpo === sub.nome) { setNomeEdit(sub.nome); return; }
+    onEditar(sub.id, { nome: nomeLimpo });
+  }
+
+  async function excluir() {
+    if (!window.confirm(`Excluir o subtotal "${sub.nome}"?`)) return;
+    await onExcluir(sub.id);
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50">
+      <div className="flex flex-col shrink-0">
+        <button onClick={() => mover(-1)} disabled={ehPrimeiro} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▲</button>
+        <button onClick={() => mover(1)} disabled={ehUltimo} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▼</button>
+      </div>
+
+      {editando ? (
+        <input
+          value={nomeEdit}
+          onChange={(e) => setNomeEdit(e.target.value)}
+          onBlur={salvarNome}
+          onKeyDown={(e) => { if (e.key === 'Enter') salvarNome(); if (e.key === 'Escape') { setNomeEdit(sub.nome); setEditando(false); } }}
+          autoFocus
+          className="flex-1 min-w-[120px] border rounded px-2 py-1 text-sm font-bold"
+        />
+      ) : (
+        <span onClick={() => setEditando(true)} title="Clique para editar" className="flex-1 min-w-[120px] cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm font-bold text-gray-800">
+          {sub.nome}
+        </span>
+      )}
+
+      <select
+        value={sub.formula}
+        onChange={(e) => onEditar(sub.id, { formula: e.target.value as FormulaSubtotal })}
+        className="text-xs border rounded px-1.5 py-1 shrink-0 bg-indigo-50 text-indigo-700"
+      >
+        {(Object.keys(FORMULA_LABEL) as FormulaSubtotal[]).map((f) => (
+          <option key={f} value={f}>{FORMULA_LABEL[f]}</option>
+        ))}
+      </select>
+
+      <span className="text-xs text-gray-400 shrink-0">após</span>
+
+      <select
+        value={sub.apos_tipo}
+        onChange={(e) => onEditar(sub.id, { apos_tipo: e.target.value as TipoCategoria })}
+        className="text-xs border rounded px-1.5 py-1 shrink-0"
+      >
+        {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
+          <option key={t} value={t}>{TIPO_LABEL[t]}</option>
+        ))}
+      </select>
+
+      <button onClick={excluir} className="text-xs text-red-400 hover:text-red-600 shrink-0">Excluir</button>
+    </div>
+  );
+}
+
+// ─── Formulário novo subtotal ─────────────────────────────────────────────────
+
+function FormNovaSubtotal({
+  onCriar, onFechar,
+}: {
+  onCriar: (dados: { nome: string; formula: FormulaSubtotal; apos_tipo: TipoCategoria }) => Promise<void>;
+  onFechar: () => void;
+}) {
+  const [nome, setNome] = useState('');
+  const [formula, setFormula] = useState<FormulaSubtotal>('resultado_operacional');
+  const [aposTipo, setAposTipo] = useState<TipoCategoria>('despesa');
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    if (!nome.trim()) return;
+    setSalvando(true);
+    try {
+      await onCriar({ nome: nome.trim(), formula, apos_tipo: aposTipo });
+      onFechar();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 py-2 px-2 bg-slate-50 border-y border-slate-200 mt-1">
+      <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && salvar()} placeholder="Ex: = Resultado Operacional" autoFocus className="flex-1 min-w-[180px] border rounded px-2 py-1 text-sm" />
+      <select value={formula} onChange={(e) => setFormula(e.target.value as FormulaSubtotal)} className="text-xs border rounded px-1.5 py-1">
+        {(Object.keys(FORMULA_LABEL) as FormulaSubtotal[]).map((f) => (
+          <option key={f} value={f}>{FORMULA_LABEL[f]}</option>
+        ))}
+      </select>
+      <span className="text-xs text-gray-500">após</span>
+      <select value={aposTipo} onChange={(e) => setAposTipo(e.target.value as TipoCategoria)} className="text-xs border rounded px-1.5 py-1">
+        {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
+          <option key={t} value={t}>{TIPO_LABEL[t]}</option>
+        ))}
+      </select>
+      <button onClick={salvar} disabled={salvando || !nome.trim()} className="bg-slate-800 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50 hover:bg-slate-700">
+        {salvando ? 'Salvando...' : 'Adicionar'}
+      </button>
+      <button onClick={onFechar} className="text-xs text-gray-400 hover:text-gray-600">Cancelar</button>
+    </div>
+  );
+}
+
+// ─── Formulário nova categoria ────────────────────────────────────────────────
 
 interface FormNovaCategoriaProps {
   paiId: string | null;
@@ -1879,28 +2141,15 @@ function FormNovaCategoria({ paiId, tipoDefault, sinalDefault, onCriar, onFechar
 
   return (
     <div className="flex flex-wrap items-center gap-2 py-2 px-2 bg-slate-50 border-y border-slate-200">
-      <input
-        value={nome}
-        onChange={(e) => setNome(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && salvar()}
-        placeholder="Nome da categoria"
-        autoFocus
-        className="flex-1 min-w-[160px] border rounded px-2 py-1 text-sm"
-      />
+      <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && salvar()} placeholder="Nome da categoria" autoFocus className="flex-1 min-w-[160px] border rounded px-2 py-1 text-sm" />
       <select value={tipo} onChange={(e) => setTipo(e.target.value as TipoCategoria)} className="text-xs border rounded px-1.5 py-1">
-        {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => (
-          <option key={t} value={t}>{TIPO_LABEL[t]}</option>
-        ))}
+        {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
       </select>
       <select value={sinal} onChange={(e) => setSinal(Number(e.target.value))} className="text-xs border rounded px-1.5 py-1 w-12">
         <option value={1}>+</option>
         <option value={-1}>−</option>
       </select>
-      <button
-        onClick={salvar}
-        disabled={salvando || !nome.trim()}
-        className="bg-slate-800 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50 hover:bg-slate-700"
-      >
+      <button onClick={salvar} disabled={salvando || !nome.trim()} className="bg-slate-800 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50 hover:bg-slate-700">
         {salvando ? 'Salvando...' : 'Adicionar'}
       </button>
       <button onClick={onFechar} className="text-xs text-gray-400 hover:text-gray-600">Cancelar</button>

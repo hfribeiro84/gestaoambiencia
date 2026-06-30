@@ -12,11 +12,12 @@ Desenvolvimento **modular e incremental** — um módulo por vez sobre a fundaç
 
 ## Status
 
-- **Fase 1 — Esqueleto: em construção.** Estrutura base, autenticação, banco, camada de
-  conexão com as APIs e configs de deploy prontos. Falta preencher credenciais reais e
-  subir no ar (Supabase → deploy → tokens das integrações).
-- Módulos de negócio (Financeiro, Resultado por Projeto, Contratos, Unidades NETR, RH,
-  Comercial, Dashboard Executivo): **não iniciados**.
+- **Fase 1 — Esqueleto: completo localmente.** Estrutura base, autenticação, banco,
+  camada de conexão com APIs e configs de deploy prontos. Falta credenciais reais +
+  deploy (Supabase → Railway → Vercel).
+- **Módulo DRE Gerencial: em produção (local).** Funcional completo com Conta Azul.
+- Módulos futuros (Resultado por Projeto, Contratos, Unidades NETR, RH, Comercial,
+  Dashboard Executivo): **não iniciados**.
 
 ## Stack e decisões
 
@@ -28,51 +29,121 @@ Desenvolvimento **modular e incremental** — um módulo por vez sobre a fundaç
   Supabase e tokens OAuth ficam SÓ no backend; o frontend usa apenas a `anon key`.
 - Código e comentários em **português**.
 
+## Padrões de código adotados
+
+- **Lazy save na aba Configurações do DRE:** todas as edições estruturais (categoria:
+  nome, tipo, sinal, pai, ordem; subtotal: nome, fórmula, posição) ficam em estado local
+  (`localCats`, `pendingEdits`, `localSubtotais`, `pendingSubtotalEdits`) e só são
+  enviadas ao backend quando o usuário clica "Salvar". Badge âmbar mostra o total de
+  alterações não salvas. Criar e excluir continuam sendo imediatos (operações que
+  precisam de confirmação do servidor).
+- **Operações de Create/Delete imediatas** (chamada API → `carregarConfig()`) — apenas
+  edições de campos vão pelo lazy save.
+- **Componentes de configuração unificados:** a árvore de categorias DRE e os
+  mapeamentos CA→DRE vivem no mesmo painel (`EstruturaDRE`). Os chips de mapeamento
+  ficam inline em cada nó da árvore. A seção de subtotais também fica no mesmo painel.
+- **Subtotais dinâmicos:** antes os subtotais (= Receita Líquida, = Resultado
+  Operacional…) eram hardcoded em `LINHAS_CALCULADAS_APOS`. Agora são registros na
+  tabela `dre_subtotal`, editáveis/posicionáveis via aba Configurações e lidos pela
+  `TabelaDRE` dinamicamente.
+
 ## Estrutura de pastas
 
 ```
 backend/
   src/
-    index.ts                # bootstrap Express + agendador (node-cron diário 05:00)
-    config/env.ts           # lê/valida variáveis de ambiente
-    config/supabase.ts      # supabaseAdmin (service_role) + validarTokenUsuario
-    middleware/auth.ts      # valida JWT do Supabase (Bearer)
-    middleware/erros.ts     # tratador central de erros
-    rotas/saude.rotas.ts        # GET /api/saude
-    rotas/auth.rotas.ts         # GET /api/auth/eu
-    rotas/integracoes.rotas.ts  # status, testar, sincronizar, OAuth
-    integracoes/            # 1 conector por provedor + index (registro)
-      contaAzul.ts (OAuth, ASS+NETR), googleDrive.ts (OAuth),
-      pipedrive.ts (token), clockify.ts (key), claude.ts (Anthropic),
-      persistencia.ts (salva/lê tokens em integracao_config)
-    servicos/sincronizacao.ts   # sync diária (esqueleto) + manual
-    servicos/logSync.ts         # auditoria em sync_log
+    index.ts                     # bootstrap Express + agendador (node-cron diário 05:00)
+    config/env.ts                # lê/valida variáveis de ambiente
+    config/supabase.ts           # supabaseAdmin (service_role) + validarTokenUsuario
+    middleware/auth.ts           # valida JWT do Supabase (Bearer)
+    middleware/erros.ts          # tratador central de erros
+    rotas/
+      saude.rotas.ts             # GET /api/saude
+      auth.rotas.ts              # GET /api/auth/eu
+      integracoes.rotas.ts       # status, testar, sincronizar, OAuth
+      dre.rotas.ts               # todos os endpoints do módulo DRE
+    integracoes/                 # 1 conector por provedor + index (registro)
+      contaAzul.ts               # OAuth + chamadas API (ASS+NETR)
+      googleDrive.ts             # OAuth
+      pipedrive.ts, clockify.ts, claude.ts
+      persistencia.ts            # salva/lê tokens em integracao_config
+    modulos/financeiro/
+      dreCalculo.ts              # cálculo do DRE (lança+acumula+totais)
+      dreContaAzul.ts            # busca lançamentos, saldo, extrato via API CA
+      dreTypes.ts                # tipos compartilhados do módulo DRE
+    servicos/sincronizacao.ts, logSync.ts
     tipos/integracao.ts
   railway.json, .env.example, tsconfig.json
+
 frontend/
   src/
     main.tsx, App.tsx (rotas)
-    lib/supabase.ts         # client (anon key)
-    lib/api.ts              # fetch wrapper (injeta token Supabase)
+    lib/supabase.ts              # client (anon key)
+    lib/api.ts                   # fetch wrapper (injeta token Supabase)
     contextos/AuthContext.tsx
     componentes/RotaProtegida.tsx, Layout.tsx (sidebar)
-    paginas/Login.tsx, Dashboard.tsx, Integracoes.tsx
+    paginas/
+      Login.tsx, Dashboard.tsx, Integracoes.tsx
+      financeiro/
+        DREGerencial.tsx         # módulo DRE completo (SPA dentro do SPA)
+        NfGerenciador.tsx        # gerenciador de NFs (NETR)
   vercel.json (SPA rewrite), .env.example, vite/tailwind/postcss configs
-supabase/migrations/0001_esqueleto.sql
+
+supabase/migrations/
+  0001_esqueleto.sql             # tabelas base (empresas, perfil, integracao_config, sync_log)
+  0002_nf_planilha_salva.sql     # tabela nf_planilha_salva
+  0003_nf_aliquota_iss.sql       # tabela nf_aliquota_iss
+  0004_nf_ultimo_resultado.sql   # tabela nf_ultimo_resultado
+  0005_dre.sql                   # tabelas DRE (dre_categoria, dre_mapeamento, dre_snapshot)
+  0006_nf_associacao_manual.sql  # associação manual NF ↔ NETR
+  0007_dre_subtotais.sql         # tabela dre_subtotal (subtotais configuráveis)
 ```
 
-## Banco — tabelas (migration 0001)
+## Banco — tabelas
 
-| Tabela              | Função |
-| ------------------- | ------ |
-| `empresas`          | ASS e NETR (seed inserido). |
-| `perfil_usuario`    | Estende `auth.users` (nome, papel). |
-| `integracao_config` | Tokens/credenciais por provedor (jsonb). Só backend (service_role). |
-| `sync_log`          | Auditoria das sincronizações. |
+| Tabela               | Migration | Função |
+| -------------------- | --------- | ------ |
+| `empresas`           | 0001 | ASS e NETR (seed inserido). |
+| `perfil_usuario`     | 0001 | Estende `auth.users` (nome, papel). |
+| `integracao_config`  | 0001 | Tokens/credenciais por provedor (jsonb). Só backend. |
+| `sync_log`           | 0001 | Auditoria das sincronizações. |
+| `nf_planilha_salva`  | 0002 | Planilhas de NF salvas (NETR). |
+| `nf_aliquota_iss`    | 0003 | Alíquotas ISS por município. |
+| `nf_ultimo_resultado`| 0004 | Cache do último resultado de NF por CNPJ. |
+| `dre_categoria`      | 0005 | Árvore de categorias do DRE (pai_id, tipo, sinal, ordem). |
+| `dre_mapeamento`     | 0005 | Mapeamento nome_ca → categoria_id, por empresa. |
+| `dre_snapshot`       | 0005 | Snapshots calculados do DRE (dados jsonb). |
+| `nf_associacao_manual`| 0006 | Associação manual NF ↔ unidade NETR. |
+| `dre_subtotal`       | 0007 | Subtotais configuráveis (= Resultado Op., etc.). |
 
-RLS habilitado em todas. `integracao_config` sem policy para usuário comum (protegida).
+RLS habilitado em todas. `integracao_config` sem policy de usuário comum (protegida).
 
-## Endpoints (todos sob `/api`)
+## Endpoints DRE (todos sob `/api/financeiro/dre`, requerem auth exceto indicado)
+
+| Método | Rota | Descrição |
+| ------ | ---- | --------- |
+| GET  | `/categorias` | Lista todas as categorias (flat, ordenada por `ordem`). |
+| POST | `/categorias` | Cria categoria (nome, pai_id, tipo, sinal). |
+| PATCH | `/categorias/:id` | Edita nome/pai/tipo/sinal/ordem. |
+| DELETE | `/categorias/:id` | Exclui (recusa se tiver filhos ou mapeamentos). |
+| GET  | `/subtotais` | Lista todos os subtotais (nome, formula, apos_tipo, ordem). |
+| POST | `/subtotais` | Cria subtotal. |
+| PATCH | `/subtotais/:id` | Edita nome/formula/apos_tipo/ordem. |
+| DELETE | `/subtotais/:id` | Exclui subtotal. |
+| GET  | `/mapeamento/:empresa` | Lista mapeamentos CA→DRE (ass/netr). |
+| POST | `/mapeamento/:empresa` | Adiciona/atualiza mapeamento (upsert). |
+| DELETE | `/mapeamento/:empresa/:id` | Remove mapeamento. |
+| GET  | `/categorias-ca/:empresa` | Categorias distintas do CA nos últimos 12 meses. |
+| POST | `/calcular/:empresa/:mes/:ano` | Calcula DRE e salva snapshot. |
+| GET  | `/ultimo/:empresa` | Último snapshot calculado. |
+| GET  | `/snapshots/:empresa` | Lista snapshots (id, mes_ref, ano_ref, calculado_em). |
+| DELETE | `/snapshots/:empresa/:id` | Exclui snapshot. |
+| GET  | `/extrato/:empresa/:mes/:ano` | Extrato mensal (ass/netr). |
+| GET  | `/resumo/:empresa` | Resumo executivo IA (Haiku) a partir do último snapshot. |
+| GET  | `/debug/raw/:empresa/:mes/:ano` | Resposta bruta da API CA (diagnóstico). |
+| GET  | `/debug/amostra/:empresa/:mes/:ano` | Amostra de lançamentos parseados. |
+
+## Endpoints infraestrutura (todos sob `/api`)
 
 | Método | Rota | Auth | Descrição |
 | ------ | ---- | ---- | --------- |
@@ -87,16 +158,33 @@ RLS habilitado em todas. `integracao_config` sem policy para usuário comum (pro
 Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 `google_drive`, `claude`.
 
+## Módulo DRE — arquitetura
+
+- **Cálculo:** regime de vencimento (parcelas entram no mês do `dataVencimento`).
+  A função `calcularDRE()` busca lançamentos do CA via API, acumula por categoria usando
+  `dre_mapeamento`, soma subcategorias para pais, calcula totais acumulados
+  (receitaLiquida, resultadoOperacional, resultadoLiquido, fluxoCaixaLivre) e salva
+  snapshot em `dre_snapshot`.
+- **Subtotais:** lidos de `dre_subtotal` no frontend. Cada subtotal tem `apos_tipo`
+  (qual grupo de categorias antecede a linha) e `formula` (qual campo de
+  `TotaisCalculados` mostrar). `TabelaDRE` os agrupa por `apos_tipo` e renderiza
+  dinamicamente em lugar das constantes hardcoded anteriores.
+- **Mapeamentos:** globais por empresa — valem para todos os meses e períodos.
+  A aba Configurações mostra a árvore de categorias com chips inline dos mapeamentos CA,
+  a seção de subtotais configuráveis, e as categorias CA sem mapeamento na parte inferior.
+- **Lazy save:** edições na estrutura (categoria + subtotal) ficam em estado local até
+  o usuário clicar "Salvar" — uma única rodada de PATCHes sequenciais + 1 reload.
+
 ## Integrações — status de implementação
 
-| Provedor | Auth | Fase 1 |
+| Provedor | Auth | Status |
 | -------- | ---- | ------ |
 | Pipedrive | API token | Teste de conexão ✅ |
 | Clockify | API key | Teste de conexão ✅ |
-| Claude | API key | Cliente + teste ✅ |
-| Conta Azul ASS | OAuth2 | Fluxo + teste ✅ (confirmar endpoints no registro) |
-| Conta Azul NETR | OAuth2 | Fluxo + teste ✅ (confirmar endpoints no registro) |
-| Google Drive | OAuth2 | Fluxo + teste ✅ (escopo readonly) |
+| Claude | API key | Cliente + resumo executivo ✅ |
+| Conta Azul ASS | OAuth2 | Fluxo completo + DRE ✅ |
+| Conta Azul NETR | OAuth2 | Fluxo completo + DRE ✅ |
+| Google Drive | OAuth2 | Fluxo OAuth ✅ (conteúdo: futuro) |
 
 CSVs (Uber, 99, planilhas de NF/unidades/planejamento): entram nos módulos, via upload.
 
@@ -112,8 +200,8 @@ cd frontend && cp .env.example .env  # preencher VITE_*
 npm install && npm run dev           # http://localhost:5173
 ```
 
-Crie o usuário inicial em Supabase > Authentication > Users (ou Sign Up) e rode a
-migration `supabase/migrations/0001_esqueleto.sql` no SQL Editor.
+Crie o usuário inicial em Supabase > Authentication > Users e rode as migrations
+`supabase/migrations/` em ordem no SQL Editor.
 
 ## Deploy
 
@@ -125,10 +213,19 @@ migration `supabase/migrations/0001_esqueleto.sql` no SQL Editor.
 - Nas configs OAuth (Conta Azul, Google), cadastrar os redirect URIs de produção:
   `https://<railway>/api/integracoes/<provedor>/callback`.
 
-## Pendências da Fase 1 (próximos passos)
+## Pendências
 
-1. Criar projeto Supabase, rodar migration, preencher `.env`.
+### Fase 1 (infra)
+1. Criar projeto Supabase, rodar migrations em ordem, preencher `.env`.
 2. Criar repositório GitHub e subir o código.
 3. Deploy Railway (backend) + Vercel (frontend).
 4. Preencher tokens simples (Pipedrive, Clockify, Anthropic) e testar.
 5. Registrar apps OAuth (Conta Azul ASS/NETR, Google Drive) e conectar.
+
+### Próximos módulos
+- Resultado por Projeto (rateio de custos/despesas por projeto Pipedrive)
+- Contratos (pipeline Pipedrive × faturamento CA)
+- Unidades NETR (acompanhamento de obras)
+- RH (Clockify × custos)
+- Comercial (funil Pipedrive)
+- Dashboard Executivo (consolidado do grupo)

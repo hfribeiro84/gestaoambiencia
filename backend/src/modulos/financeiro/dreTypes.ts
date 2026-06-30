@@ -80,6 +80,16 @@ export interface CategoriaCA {
   count: number;
 }
 
+export type FormulaSubtotal = 'receita_liquida' | 'resultado_operacional' | 'resultado_liquido' | 'fluxo_caixa_livre';
+
+export interface DreSubtotal {
+  id: string;
+  nome: string;
+  formula: FormulaSubtotal;
+  apos_tipo: TipoCategoria;
+  ordem: number;
+}
+
 export interface DreSnapshot {
   id: string;
   empresa: EmpresaDRE;

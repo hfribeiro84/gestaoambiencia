@@ -10,6 +10,7 @@ import { criarCliente } from '../integracoes/claude';
 import type { EmpresaDRE, ItemExtrato, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
 
 const TIPOS_VALIDOS = new Set<TipoCategoria>(['receita', 'deducao', 'custo', 'despesa', 'financeiro', 'divisao']);
+const FORMULAS_VALIDAS = new Set(['receita_liquida', 'resultado_operacional', 'resultado_liquido', 'fluxo_caixa_livre']);
 
 export const rotasDre = Router();
 
@@ -507,6 +508,94 @@ Seja direto, use linguagem de gestão, sem repetir números que já aparecem nos
 
     const texto = resp.content.find((c) => c.type === 'text');
     res.json({ resumo: texto?.type === 'text' ? texto.text : '' });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/subtotais
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/subtotais', autenticar, async (_req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('dre_subtotal')
+      .select('*')
+      .order('apos_tipo')
+      .order('ordem');
+    if (error) throw new Error(error.message);
+    res.json(data ?? []);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// POST /financeiro/dre/subtotais
+// ──────────────────────────────────────────────────────────────
+rotasDre.post('/financeiro/dre/subtotais', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { nome, formula, apos_tipo } = req.body as { nome?: string; formula?: string; apos_tipo?: string };
+    if (!nome?.trim() || !formula || !FORMULAS_VALIDAS.has(formula) || !apos_tipo || !TIPOS_VALIDOS.has(apos_tipo as TipoCategoria)) {
+      res.status(400).json({ erro: 'nome, formula válida e apos_tipo válido são obrigatórios.' });
+      return;
+    }
+    const { data: irmaos } = await supabaseAdmin
+      .from('dre_subtotal')
+      .select('ordem')
+      .eq('apos_tipo', apos_tipo);
+    const maxOrdem = (irmaos ?? []).reduce((m: number, r: { ordem: number }) => Math.max(m, r.ordem), 0);
+    const { data, error } = await supabaseAdmin
+      .from('dre_subtotal')
+      .insert({ nome: nome.trim(), formula, apos_tipo, ordem: maxOrdem + 1 })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// PATCH /financeiro/dre/subtotais/:id
+// ──────────────────────────────────────────────────────────────
+rotasDre.patch('/financeiro/dre/subtotais/:id', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nome, formula, apos_tipo, ordem } = req.body as { nome?: string; formula?: string; apos_tipo?: string; ordem?: number };
+    if (formula !== undefined && !FORMULAS_VALIDAS.has(formula)) {
+      res.status(400).json({ erro: 'Fórmula inválida.' });
+      return;
+    }
+    const patch: Record<string, unknown> = {};
+    if (nome !== undefined) patch.nome = nome.trim();
+    if (formula !== undefined) patch.formula = formula;
+    if (apos_tipo !== undefined) patch.apos_tipo = apos_tipo;
+    if (ordem !== undefined) patch.ordem = ordem;
+    if (Object.keys(patch).length === 0) { res.status(400).json({ erro: 'Nada para atualizar.' }); return; }
+    const { data, error } = await supabaseAdmin
+      .from('dre_subtotal')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// DELETE /financeiro/dre/subtotais/:id
+// ──────────────────────────────────────────────────────────────
+rotasDre.delete('/financeiro/dre/subtotais/:id', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabaseAdmin.from('dre_subtotal').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

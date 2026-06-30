@@ -26,6 +26,9 @@ const NOMES: Record<string, string> = {
   claude: 'Claude (IA)',
 };
 
+// Provedores que suportam desconexão (limpar token).
+const DESCONECTAVEIS = ['conta_azul_ass', 'conta_azul_netr'];
+
 // Provedores que usam fluxo OAuth (botão "Conectar").
 const OAUTH = ['conta_azul_ass', 'conta_azul_netr', 'google_drive'];
 
@@ -72,6 +75,7 @@ export function Integracoes() {
   const [formAberto, setFormAberto] = useState<string | null>(null);
   const [formValores, setFormValores] = useState<Record<string, string>>({});
   const [formSalvando, setFormSalvando] = useState(false);
+  const [desconectando, setDesconectando] = useState<string | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -103,6 +107,21 @@ export function Integracoes() {
       setAviso((e as Error).message);
     } finally {
       setSincronizando(false);
+    }
+  }
+
+  async function desconectar(provedor: string) {
+    if (!window.confirm(`Desconectar ${NOMES[provedor]}?\n\nO token será apagado. Você precisará reconectar com a conta correta.`)) return;
+    setDesconectando(provedor);
+    setAviso('');
+    try {
+      await api(`/api/integracoes/${provedor}/desconectar`, { method: 'POST' });
+      await carregar();
+      setAviso(`${NOMES[provedor]} desconectado. Clique em "Conectar" para autorizar novamente com a conta correta.`);
+    } catch (e) {
+      setAviso(`Erro ao desconectar: ${(e as Error).message}`);
+    } finally {
+      setDesconectando(null);
     }
   }
 
@@ -184,6 +203,17 @@ export function Integracoes() {
                   >
                     {it.status === 'ok' ? 'Reconectar' : 'Conectar'}
                   </a>
+                )}
+
+                {/* Desconectar: limpa token corrompido antes de reconectar com a conta certa */}
+                {DESCONECTAVEIS.includes(it.provedor) && it.status === 'ok' && (
+                  <button
+                    onClick={() => desconectar(it.provedor)}
+                    disabled={desconectando === it.provedor}
+                    className="text-sm text-red-600 underline disabled:opacity-50"
+                  >
+                    {desconectando === it.provedor ? 'Desconectando...' : 'Desconectar'}
+                  </button>
                 )}
               </div>
 

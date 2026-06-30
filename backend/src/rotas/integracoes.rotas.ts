@@ -102,6 +102,19 @@ rotasIntegracoes.get('/integracoes/:provedor/url-debug', async (req, res) => {
   }
 });
 
+// --- Desconecta (apaga tokens, mantém app_config) ---------------------------
+rotasIntegracoes.post('/integracoes/:provedor/desconectar', autenticar, async (req, res) => {
+  const { provedor } = req.params;
+  try {
+    if (provedor === 'conta_azul_ass') await contaAzul.desconectar('ass');
+    else if (provedor === 'conta_azul_netr') await contaAzul.desconectar('netr');
+    else { res.status(400).json({ erro: `Provedor sem suporte a desconexão: ${provedor}` }); return; }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
 // --- OAuth: inicia a autorização (redireciona ao provedor) ------------------
 rotasIntegracoes.get('/integracoes/:provedor/conectar', async (req, res) => {
   const { provedor } = req.params;

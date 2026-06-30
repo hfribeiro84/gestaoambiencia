@@ -69,14 +69,22 @@ async function resolverAppConfig(conta: ContaAzul): Promise<AppConfig | null> {
 
 /**
  * Salva a configuração do app OAuth no banco.
- * Preserva eventuais tokens já existentes — só atualiza o app_config.
+ * Se o client_id mudou, apaga os tokens existentes e força reconexão —
+ * manter tokens de um app diferente causaria refresh com credenciais erradas
+ * e poderia cruzar dados entre as contas ASS e NETR.
  */
 export async function configurar(conta: ContaAzul, config: Omit<AppConfig, 'api_base'> & { api_base?: string }): Promise<void> {
   const prov = provedor(conta);
-  // Lê credenciais existentes pra não sobrescrever tokens OAuth já salvos.
   const atual = await lerCredencial(prov);
+  const clientIdAtual = (atual?.app_config as Partial<AppConfig> | undefined)?.client_id;
+
+  // Tokens ficam inválidos quando o app OAuth muda — zera para forçar novo fluxo.
+  const tokensBase = clientIdAtual && clientIdAtual !== config.client_id
+    ? { access_token: '' }
+    : { access_token: atual?.access_token ?? '', refresh_token: atual?.refresh_token, expira_em: atual?.expira_em };
+
   await salvarCredencial(prov, 'oauth2', {
-    ...(atual ?? { access_token: '' }),
+    ...tokensBase,
     app_config: {
       client_id: config.client_id,
       client_secret: config.client_secret,
@@ -85,6 +93,9 @@ export async function configurar(conta: ContaAzul, config: Omit<AppConfig, 'api_
       api_base: config.api_base || DEFAULTS.api_base,
     },
   });
+
+  // Invalida cache de URL base — pode ter mudado com o novo app.
+  apiBaseOk.delete(conta);
 }
 
 /** Monta a URL para o usuário autorizar o app (início do fluxo OAuth). */
@@ -134,6 +145,8 @@ export async function trocarCodigoPorToken(conta: ContaAzul, code: string): Prom
     refresh_token: tk.refresh_token,
     expira_em: tk.expires_in ? Date.now() + tk.expires_in * 1000 : undefined,
   });
+  // Invalida cache de URL base — novo token pode pertencer a outro ambiente.
+  apiBaseOk.delete(conta);
 }
 
 /** Retorna um access token válido, renovando via refresh_token se necessário. */
@@ -228,6 +241,23 @@ export async function chamadaApi(
   // Nenhuma alternativa funcionou — devolve o erro original
   apiBaseOk.set(conta, cfg.api_base);
   return resp;
+}
+
+/**
+ * Remove os tokens OAuth desta conta (mantém o app_config).
+ * Use quando o token estiver corrompido ou pertencer à empresa errada.
+ * Após desconectar, o usuário precisa passar pelo fluxo OAuth novamente.
+ */
+export async function desconectar(conta: ContaAzul): Promise<void> {
+  const prov = provedor(conta);
+  const atual = await lerCredencial(prov);
+  await salvarCredencial(prov, 'oauth2', {
+    ...(atual ?? {}),
+    access_token: '',
+    refresh_token: undefined,
+    expira_em: undefined,
+  });
+  apiBaseOk.delete(conta);
 }
 
 /** Testa a conexão: app configurado + token válido respondendo à API. */

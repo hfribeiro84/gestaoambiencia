@@ -170,6 +170,9 @@ function somarPorTipo(
 ): ValorMes[] {
   const resultado = meses.map(({ mes, ano }) => ({ mes, ano, valor: 0 }));
 
+  // Após somarSubcategorias, cada nó já contém a soma de toda a sua sub-árvore.
+  // Basta somar os nós mais altos que correspondem ao tipo sem recursionar dentro
+  // deles — evita double-counting quando pai e filhos têm o mesmo tipo.
   function percorrer(linhas: LinhaDRE[]) {
     for (const l of linhas) {
       if (l.tipo === tipo) {
@@ -180,8 +183,10 @@ function somarPorTipo(
         for (let i = 0; i < resultado.length; i++) {
           resultado[i].valor += l.valores[i].valor;
         }
+        // Não recursiona: o valor do nó já inclui todos os descendentes
+      } else {
+        percorrer(l.subcategorias);
       }
-      percorrer(l.subcategorias);
     }
   }
 

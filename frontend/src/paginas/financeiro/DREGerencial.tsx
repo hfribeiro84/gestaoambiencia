@@ -203,6 +203,7 @@ export function DREGerencial() {
   const [erroConfig, setErroConfig] = useState('');
   const [erroCatsCA, setErroCatsCA] = useState('');
   const [subtotais, setSubtotais] = useState<DreSubtotal[]>([]);
+  const [mappingsAlterados, setMappingsAlterados] = useState(false);
 
   // ── Carregar último snapshot ao mudar empresa ──────────────────────────────
   const carregarSnapshot = useCallback(async () => {
@@ -234,6 +235,7 @@ export function DREGerencial() {
     try {
       const snap = await api<DreSnapshot>(`/api/financeiro/dre/calcular/${empresa}/${mes}/${ano}`, { method: 'POST' });
       setSnapshot(snap);
+      setMappingsAlterados(false);
     } catch (e) {
       setErroDRE((e as Error).message);
     } finally {
@@ -350,6 +352,7 @@ export function DREGerencial() {
     try {
       await api(`/api/financeiro/dre/mapeamento/${empresaConfig}/${id}`, { method: 'DELETE' });
       await carregarConfig();
+      setMappingsAlterados(true);
     } catch (e) {
       setErroConfig((e as Error).message);
     }
@@ -438,6 +441,7 @@ export function DREGerencial() {
         body: JSON.stringify({ nome_ca: nomeCA, categoria_id: categoriaId }),
       });
       await carregarConfig();
+      setMappingsAlterados(true);
     } catch (e) {
       setErroConfig((e as Error).message);
       throw e;
@@ -526,6 +530,7 @@ export function DREGerencial() {
           onGerarResumo={gerarResumo}
           onFecharResumo={() => setMostrarResumo(false)}
           subtotais={subtotais}
+          mappingsAlterados={mappingsAlterados}
         />
       )}
 
@@ -594,13 +599,14 @@ interface AbaDREProps {
   onGerarResumo: () => void;
   onFecharResumo: () => void;
   subtotais: DreSubtotal[];
+  mappingsAlterados: boolean;
 }
 
 function AbaDRE({
   mes, ano, setMes, setAno, snapshot, carregando, calculando, erro,
   expandidos, onToggle, onCalcular,
   resumo, carregandoResumo, erroResumo, mostrarResumo, onGerarResumo, onFecharResumo,
-  subtotais,
+  subtotais, mappingsAlterados,
 }: AbaDREProps) {
   const dados = snapshot?.dados ?? null;
   const meses = dados?.meses ?? [];
@@ -644,6 +650,19 @@ function AbaDRE({
           </span>
         )}
       </div>
+
+      {mappingsAlterados && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800 flex items-center justify-between gap-3">
+          <span>Mapeamentos alterados — clique em <strong>Atualizar</strong> para recalcular o DRE com os novos valores.</span>
+          <button
+            onClick={onCalcular}
+            disabled={calculando || carregando}
+            className="text-xs bg-amber-700 text-white px-3 py-1.5 rounded font-medium disabled:opacity-50 hover:bg-amber-800 shrink-0"
+          >
+            {calculando ? 'Calculando...' : 'Atualizar agora'}
+          </button>
+        </div>
+      )}
 
       {erro && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{erro}</div>
@@ -919,37 +938,41 @@ function TabelaDRE({ categorias, totais, meses, expandidos, onToggle, naoMapeada
 
   for (const tipo of ordem) {
     const cats = porTipo[tipo];
+    if (cats.length === 0) continue;
 
-    // Total do grupo
-    const totalGrupoValores = meses.map((m) => ({
-      mes: m.mes, ano: m.ano,
-      valor: cats.reduce((s, c) => s + valorDoMes(c.valores, m.mes, m.ano), 0),
-    }));
-    const totalGrupo12 = cats.reduce((s, c) => s + c.total12m, 0);
-    const pctGrupo = receitaBrutaTotal12 ? (totalGrupo12 / receitaBrutaTotal12) * 100 : 0;
+    // Exibe cabeçalho de grupo separado apenas quando há múltiplas raízes do mesmo tipo.
+    // Com uma única raiz, a própria categoria serve de cabeçalho (evita duplicação de nome).
+    if (cats.length > 1) {
+      const totalGrupoValores = meses.map((m) => ({
+        mes: m.mes, ano: m.ano,
+        valor: cats.reduce((s, c) => s + valorDoMes(c.valores, m.mes, m.ano), 0),
+      }));
+      const totalGrupo12 = cats.reduce((s, c) => s + c.total12m, 0);
+      const pctGrupo = receitaBrutaTotal12 ? (totalGrupo12 / receitaBrutaTotal12) * 100 : 0;
 
-    rows.push(
-      <tr key={`grupo-${tipo}`} className="bg-white">
-        <td className="px-4 py-2 font-semibold sticky left-0 bg-white z-10">{LABEL_TIPO[tipo]}</td>
-        {meses.map((m) => {
-          const v = totalGrupoValores.find((x) => x.mes === m.mes && x.ano === m.ano)?.valor ?? 0;
-          return (
-            <td key={`${m.mes}-${m.ano}`} className={`px-3 py-2 text-right font-semibold ${corValor(v, tipo === 'receita')}`}>
-              {v !== 0 ? formatBRL(v) : <span className="text-gray-300">—</span>}
-            </td>
-          );
-        })}
-        <td className={`px-3 py-2 text-right font-semibold ${corValor(totalGrupo12, tipo === 'receita')}`}>
-          {totalGrupo12 !== 0 ? formatBRL(totalGrupo12) : <span className="text-gray-300">—</span>}
-        </td>
-        <td className="px-3 py-2 text-right text-gray-500 text-xs">
-          {pctGrupo !== 0 ? `${pctGrupo.toFixed(1)}%` : ''}
-        </td>
-      </tr>
-    );
+      rows.push(
+        <tr key={`grupo-${tipo}`} className="bg-white">
+          <td className="px-4 py-2 font-semibold sticky left-0 bg-white z-10">{LABEL_TIPO[tipo]}</td>
+          {meses.map((m) => {
+            const v = totalGrupoValores.find((x) => x.mes === m.mes && x.ano === m.ano)?.valor ?? 0;
+            return (
+              <td key={`${m.mes}-${m.ano}`} className={`px-3 py-2 text-right font-semibold ${corValor(v, tipo === 'receita')}`}>
+                {v !== 0 ? formatBRL(v) : <span className="text-gray-300">—</span>}
+              </td>
+            );
+          })}
+          <td className={`px-3 py-2 text-right font-semibold ${corValor(totalGrupo12, tipo === 'receita')}`}>
+            {totalGrupo12 !== 0 ? formatBRL(totalGrupo12) : <span className="text-gray-300">—</span>}
+          </td>
+          <td className="px-3 py-2 text-right text-gray-500 text-xs">
+            {pctGrupo !== 0 ? `${pctGrupo.toFixed(1)}%` : ''}
+          </td>
+        </tr>
+      );
+    }
 
     for (const cat of cats) {
-      rows.push(...renderLinhaCategoria(cat, meses, expandidos, onToggle, receitaBrutaTotal12, 0));
+      rows.push(...renderLinhaCategoria(cat, meses, expandidos, onToggle, receitaBrutaTotal12, 0, cats.length === 1));
     }
 
     // Linha "Não categorizadas" para receita e despesa
@@ -1009,36 +1032,39 @@ function renderLinhaCategoria(
   onToggle: (id: string) => void,
   receitaBrutaTotal12: number,
   nivel: number,
+  ehCabecalho = false,
 ): JSX.Element[] {
   const temSubs = cat.subcategorias && cat.subcategorias.length > 0;
   const aberto = expandidos.has(cat.id);
   const pct = receitaBrutaTotal12 ? (cat.total12m / receitaBrutaTotal12) * 100 : 0;
-  const indent = nivel === 0 ? 'pl-6' : nivel === 1 ? 'pl-10' : 'pl-14';
+  const indent = nivel === 0 ? (ehCabecalho ? 'pl-4' : 'pl-6') : nivel === 1 ? 'pl-10' : 'pl-14';
+  const py = ehCabecalho ? 'py-2' : 'py-1.5';
+  const negrito = ehCabecalho ? 'font-semibold text-gray-800' : 'text-gray-700';
 
   const rows: JSX.Element[] = [
     <tr key={cat.id} className="hover:bg-gray-50">
-      <td className={`px-4 py-1.5 sticky left-0 bg-white z-10 hover:bg-gray-50 ${indent}`}>
+      <td className={`px-4 ${py} sticky left-0 bg-white z-10 hover:bg-gray-50 ${indent}`}>
         <div className="flex items-center gap-1">
           {temSubs ? (
             <button onClick={() => onToggle(cat.id)} className="text-gray-400 hover:text-gray-600 w-4 text-xs">
               {aberto ? '▼' : '▶'}
             </button>
           ) : <span className="w-4" />}
-          <span className="text-gray-700">{cat.nome}</span>
+          <span className={negrito}>{cat.nome}</span>
         </div>
       </td>
       {meses.map((m) => {
         const v = valorDoMes(cat.valores, m.mes, m.ano);
         return (
-          <td key={`${m.mes}-${m.ano}`} className={`px-3 py-1.5 text-right ${corValor(v, cat.tipo === 'receita')}`}>
-            {v !== 0 ? formatBRL(v) : <span className="text-gray-200">—</span>}
+          <td key={`${m.mes}-${m.ano}`} className={`px-3 ${py} text-right ${ehCabecalho ? 'font-semibold' : ''} ${corValor(v, cat.tipo === 'receita')}`}>
+            {v !== 0 ? formatBRL(v) : <span className={ehCabecalho ? 'text-gray-300' : 'text-gray-200'}>—</span>}
           </td>
         );
       })}
-      <td className={`px-3 py-1.5 text-right ${corValor(cat.total12m, cat.tipo === 'receita')}`}>
-        {cat.total12m !== 0 ? formatBRL(cat.total12m) : <span className="text-gray-200">—</span>}
+      <td className={`px-3 ${py} text-right ${ehCabecalho ? 'font-semibold' : ''} ${corValor(cat.total12m, cat.tipo === 'receita')}`}>
+        {cat.total12m !== 0 ? formatBRL(cat.total12m) : <span className={ehCabecalho ? 'text-gray-300' : 'text-gray-200'}>—</span>}
       </td>
-      <td className="px-3 py-1.5 text-right text-gray-400 text-xs">
+      <td className={`px-3 ${py} text-right text-gray-400 text-xs`}>
         {pct !== 0 ? `${pct.toFixed(1)}%` : ''}
       </td>
     </tr>,
@@ -1046,7 +1072,7 @@ function renderLinhaCategoria(
 
   if (temSubs && aberto) {
     for (const sub of cat.subcategorias) {
-      rows.push(...renderLinhaCategoria(sub, meses, expandidos, onToggle, receitaBrutaTotal12, nivel + 1));
+      rows.push(...renderLinhaCategoria(sub, meses, expandidos, onToggle, receitaBrutaTotal12, nivel + 1, false));
     }
   }
   return rows;
@@ -1569,6 +1595,10 @@ const TIPO_COR: Record<TipoCategoria, string> = {
   receita: 'bg-green-100 text-green-700', deducao: 'bg-orange-100 text-orange-700', custo: 'bg-purple-100 text-purple-700',
   despesa: 'bg-red-100 text-red-700', financeiro: 'bg-blue-100 text-blue-700', divisao: 'bg-gray-200 text-gray-700',
 };
+const SINAL_PADRAO: Record<TipoCategoria, number> = {
+  receita: 1, deducao: -1, custo: -1, despesa: -1, financeiro: 1, divisao: -1,
+};
+const ORDEM_TIPOS: TipoCategoria[] = ['receita', 'deducao', 'custo', 'despesa', 'financeiro', 'divisao'];
 
 /** ids da própria categoria + todos os descendentes — evita criar ciclo ao mudar de pai. */
 function coletarIds(node: DreCategoria): Set<string> {
@@ -1639,6 +1669,11 @@ function EstruturaDRE({
     }
   }
 
+  // Agrupa raízes por tipo para exibir cabeçalhos de seção (como na aba DRE)
+  const raizesPorTipo = new Map<TipoCategoria, DreCategoria[]>();
+  for (const t of ORDEM_TIPOS) raizesPorTipo.set(t, []);
+  for (const n of arvore) raizesPorTipo.get(n.tipo)?.push(n);
+
   return (
     <div className="bg-white rounded-lg shadow p-5">
       <div className="flex items-center justify-between mb-1">
@@ -1665,24 +1700,17 @@ function EstruturaDRE({
               </button>
             </>
           )}
-          <button
-            onClick={() => setFormAberto(formAberto === '__raiz__' ? null : '__raiz__')}
-            className="text-xs text-slate-700 hover:underline border border-slate-300 px-3 py-1 rounded"
-          >
-            + Categoria raiz
-          </button>
         </div>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        Edite a estrutura da DRE e veja quais categorias do Conta Azul estão mapeadas a cada linha.
-        Clique no nome para editar, setas para reordenar. Clique em "Salvar" quando terminar.
+        Clique no nome para editar, setas para reordenar, ▶ para recolher. Clique em "Salvar" para confirmar edições.
       </p>
 
       {erro && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">{erro}</div>}
 
       {carregandoCatsCA && (
         <div className="mb-3 p-2.5 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700 animate-pulse">
-          Carregando categorias do Conta Azul (12 meses)… os dropdowns de mapeamento aparecem quando terminar.
+          Carregando categorias do Conta Azul (12 meses)…
         </div>
       )}
       {!carregandoCatsCA && erroCatsCA && (
@@ -1692,44 +1720,65 @@ function EstruturaDRE({
       )}
       {!carregandoCatsCA && !erroCatsCA && catsCA.length === 0 && (
         <div className="mb-3 p-2.5 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
-          Nenhuma categoria do Conta Azul encontrada nos últimos 12 meses. Verifique a conexão na aba Integrações.
+          Nenhuma categoria do CA encontrada nos últimos 12 meses. Verifique a conexão na aba Integrações.
         </div>
       )}
 
-      {formAberto === '__raiz__' && (
-        <FormNovaCategoria
-          paiId={null}
-          tipoDefault="despesa"
-          sinalDefault={-1}
-          onCriar={onCriar}
-          onFechar={() => setFormAberto(null)}
-        />
-      )}
-
-      <div className="border rounded-lg divide-y divide-gray-100">
-        {arvore.length === 0 && (
-          <div className="text-sm text-gray-400 text-center py-6">Nenhuma categoria cadastrada.</div>
-        )}
-        {arvore.map((node) => (
-          <NodoCategoria
-            key={node.id}
-            node={node}
-            nivel={0}
-            irmaos={arvore}
-            opcoesPai={opcoesPai}
-            formAberto={formAberto}
-            setFormAberto={setFormAberto}
-            onMover={mover}
-            onEditar={onEditar}
-            onExcluir={excluir}
-            onCriar={onCriar}
-            mapeamentos={mapeamentos}
-            catsCA={catsCA}
-            carregandoCatsCA={carregandoCatsCA}
-            onAdicionarMapeamento={onAdicionarMapeamento}
-            onRemoverMapeamento={onRemoverMapeamento}
-          />
-        ))}
+      <div className="border rounded-lg overflow-hidden">
+        {ORDEM_TIPOS.map((tipo) => {
+          const roots = raizesPorTipo.get(tipo) ?? [];
+          const formKey = `__raiz_${tipo}__`;
+          return (
+            <div key={tipo} className="border-b last:border-b-0">
+              {/* Cabeçalho da seção de tipo */}
+              <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-100">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  {LABEL_TIPO[tipo]}
+                </span>
+                <button
+                  onClick={() => setFormAberto(formAberto === formKey ? null : formKey)}
+                  className="text-xs text-slate-600 hover:underline"
+                >
+                  + Categoria
+                </button>
+              </div>
+              {formAberto === formKey && (
+                <FormNovaCategoria
+                  paiId={null}
+                  tipoDefault={tipo}
+                  sinalDefault={SINAL_PADRAO[tipo]}
+                  onCriar={onCriar}
+                  onFechar={() => setFormAberto(null)}
+                />
+              )}
+              <div className="divide-y divide-gray-100">
+                {roots.length === 0 && formAberto !== formKey && (
+                  <div className="text-xs text-gray-400 text-center py-2 italic px-3">Nenhuma categoria</div>
+                )}
+                {roots.map((node) => (
+                  <NodoCategoria
+                    key={node.id}
+                    node={node}
+                    nivel={0}
+                    irmaos={roots}
+                    opcoesPai={opcoesPai}
+                    formAberto={formAberto}
+                    setFormAberto={setFormAberto}
+                    onMover={mover}
+                    onEditar={onEditar}
+                    onExcluir={excluir}
+                    onCriar={onCriar}
+                    mapeamentos={mapeamentos}
+                    catsCA={catsCA}
+                    carregandoCatsCA={carregandoCatsCA}
+                    onAdicionarMapeamento={onAdicionarMapeamento}
+                    onRemoverMapeamento={onRemoverMapeamento}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Subtotais configuráveis ──────────────────────────────────────── */}
@@ -1832,7 +1881,9 @@ function NodoCategoria({
   const [mapeandoCA, setMapeandoCA] = useState(false);
   const [novaMapeamentoCA, setNovaMapeamentoCA] = useState('');
   const [salvandoMap, setSalvandoMap] = useState(false);
+  const [aberto, setAberto] = useState(true);
 
+  const temSubs = (node.subcategorias?.length ?? 0) > 0;
   const idx = irmaos.findIndex((s) => s.id === node.id);
   const ehPrimeiro = idx === 0;
   const ehUltimo = idx === irmaos.length - 1;
@@ -1864,13 +1915,28 @@ function NodoCategoria({
 
   return (
     <div>
-      {/* Linha principal */}
-      <div className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50" style={{ paddingLeft: 8 + nivel * 22 }}>
+      {/* Linha principal com chips CA inline */}
+      <div
+        className="flex items-center flex-wrap gap-1.5 py-1.5 px-2 hover:bg-gray-50"
+        style={{ paddingLeft: 8 + nivel * 20 }}
+      >
+        {/* Setas de ordem */}
         <div className="flex flex-col shrink-0">
           <button onClick={() => onMover(node, irmaos, -1)} disabled={ehPrimeiro} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▲</button>
           <button onClick={() => onMover(node, irmaos, 1)} disabled={ehUltimo} className="text-gray-400 hover:text-gray-700 disabled:opacity-20 leading-none text-[10px]">▼</button>
         </div>
 
+        {/* Botão recolher */}
+        {temSubs ? (
+          <button
+            onClick={() => setAberto(!aberto)}
+            className="w-4 text-gray-400 hover:text-gray-700 text-xs shrink-0 leading-none"
+          >
+            {aberto ? '▼' : '▶'}
+          </button>
+        ) : <span className="w-4 shrink-0" />}
+
+        {/* Nome */}
         {editando ? (
           <input
             value={nomeEdit}
@@ -1878,75 +1944,106 @@ function NodoCategoria({
             onBlur={salvarNome}
             onKeyDown={(e) => { if (e.key === 'Enter') salvarNome(); if (e.key === 'Escape') { setNomeEdit(node.nome); setEditando(false); } }}
             autoFocus
-            className="flex-1 min-w-[120px] border rounded px-2 py-1 text-sm"
+            className="min-w-[120px] border rounded px-2 py-0.5 text-sm"
           />
         ) : (
-          <span onClick={() => setEditando(true)} title="Clique para editar" className="flex-1 min-w-[120px] cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm text-gray-800">
+          <span
+            onClick={() => setEditando(true)}
+            title="Clique para editar"
+            className="cursor-text hover:bg-gray-100 px-1.5 py-0.5 rounded text-sm text-gray-800"
+          >
             {node.nome}
           </span>
         )}
 
-        <select value={node.tipo} onChange={(e) => onEditar(node.id, { tipo: e.target.value as TipoCategoria })} className={`text-xs rounded px-1.5 py-1 border-none shrink-0 ${TIPO_COR[node.tipo]}`}>
-          {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
-        </select>
+        {/* Chips CA inline */}
+        {mapeamentosDoNode.map((m) => {
+          const catCA = catsCA.find((c) => c.nome === m.nome_ca);
+          return (
+            <span key={m.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-full text-slate-700 shrink-0">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${catCA?.tipo === 'receita' ? 'bg-green-500' : 'bg-red-500'}`} />
+              {m.nome_ca}
+              <button onClick={() => onRemoverMapeamento(m.id)} className="ml-0.5 text-slate-400 hover:text-red-500 leading-none">×</button>
+            </span>
+          );
+        })}
 
-        <select value={node.sinal} onChange={(e) => onEditar(node.id, { sinal: Number(e.target.value) })} className="text-xs border rounded px-1.5 py-1 shrink-0 w-12">
-          <option value={1}>+</option>
-          <option value={-1}>−</option>
-        </select>
-
-        <select value={node.pai_id ?? ''} onChange={(e) => onEditar(node.id, { pai_id: e.target.value || null })} className="text-xs border rounded px-1.5 py-1 shrink-0 max-w-[180px]" title="Mudar nível (categoria pai)">
-          <option value="">— Nível raiz —</option>
-          {opcoesPai.filter((o) => !idsExcluidos.has(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-
-        <button onClick={() => setFormAberto(formAberto === node.id ? null : node.id)} className="text-xs text-slate-600 hover:underline shrink-0">+ Sub</button>
-        <button onClick={() => onExcluir(node)} className="text-xs text-red-400 hover:text-red-600 shrink-0">Excluir</button>
-      </div>
-
-      {/* Mapeamentos CA desta categoria */}
-      <div style={{ paddingLeft: 8 + nivel * 22 + 28 }} className="pb-1.5">
-        {mapeamentosDoNode.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-1">
-            {mapeamentosDoNode.map((m) => {
-              const catCA = catsCA.find((c) => c.nome === m.nome_ca);
-              return (
-                <span key={m.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-full text-slate-700">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${catCA?.tipo === 'receita' ? 'bg-green-500' : 'bg-red-500'}`} />
-                  {m.nome_ca}
-                  <button onClick={() => onRemoverMapeamento(m.id)} className="ml-0.5 text-slate-400 hover:text-red-500 leading-none">×</button>
-                </span>
-              );
-            })}
-          </div>
-        )}
+        {/* Botão / formulário de mapeamento CA */}
         {mapeandoCA ? (
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <select value={novaMapeamentoCA} onChange={(e) => setNovaMapeamentoCA(e.target.value)} disabled={carregandoCatsCA || catsCAlivres.length === 0} className="text-xs border rounded px-2 py-1 flex-1 max-w-xs disabled:bg-gray-50 disabled:text-gray-400">
+          <div className="flex items-center gap-1 shrink-0">
+            <select
+              value={novaMapeamentoCA}
+              onChange={(e) => setNovaMapeamentoCA(e.target.value)}
+              disabled={carregandoCatsCA || catsCAlivres.length === 0}
+              className="text-xs border rounded px-1.5 py-1 max-w-[200px] disabled:bg-gray-50 disabled:text-gray-400"
+            >
               <option value="">
-                {carregandoCatsCA ? 'Carregando categorias CA…' : catsCAlivres.length === 0 ? 'Nenhuma categoria CA disponível' : 'Categoria CA...'}
+                {carregandoCatsCA ? 'Carregando…' : catsCAlivres.length === 0 ? 'Nenhuma disponível' : 'Cat. CA…'}
               </option>
-              {catsCAlivres.map((c) => <option key={c.nome} value={c.nome}>{c.nome} ({c.tipo}, {c.count}×)</option>)}
+              {catsCAlivres.map((c) => (
+                <option key={c.nome} value={c.nome}>{c.nome} ({c.tipo}, {c.count}×)</option>
+              ))}
             </select>
-            <button onClick={adicionarMapeamento} disabled={!novaMapeamentoCA || salvandoMap} className="text-xs bg-slate-700 text-white px-2 py-1 rounded disabled:opacity-50 hover:bg-slate-600">
-              {salvandoMap ? '...' : 'Mapear'}
+            <button
+              onClick={adicionarMapeamento}
+              disabled={!novaMapeamentoCA || salvandoMap}
+              className="text-xs bg-slate-700 text-white px-2 py-1 rounded disabled:opacity-50 hover:bg-slate-600"
+            >
+              {salvandoMap ? '…' : 'OK'}
             </button>
             <button onClick={() => { setMapeandoCA(false); setNovaMapeamentoCA(''); }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
           </div>
         ) : (
-          <button onClick={() => setMapeandoCA(true)} className="text-xs text-gray-400 hover:text-slate-600 px-1.5 py-0.5 rounded border border-dashed border-gray-300 hover:border-slate-400">
-            + Mapear CA
+          <button
+            onClick={() => setMapeandoCA(true)}
+            className="text-xs text-gray-400 hover:text-slate-600 px-1.5 py-0.5 rounded border border-dashed border-gray-300 hover:border-slate-400 shrink-0"
+          >
+            +CA
           </button>
         )}
+
+        {/* Espaçador flexível */}
+        <span className="flex-1 min-w-0" />
+
+        {/* Controles estruturais */}
+        <select
+          value={node.tipo}
+          onChange={(e) => onEditar(node.id, { tipo: e.target.value as TipoCategoria })}
+          className={`text-xs rounded px-1.5 py-1 border-none shrink-0 ${TIPO_COR[node.tipo]}`}
+        >
+          {(Object.keys(TIPO_LABEL) as TipoCategoria[]).map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
+        </select>
+
+        <select
+          value={node.sinal}
+          onChange={(e) => onEditar(node.id, { sinal: Number(e.target.value) })}
+          className="text-xs border rounded px-1.5 py-1 shrink-0 w-10"
+        >
+          <option value={1}>+</option>
+          <option value={-1}>−</option>
+        </select>
+
+        <select
+          value={node.pai_id ?? ''}
+          onChange={(e) => onEditar(node.id, { pai_id: e.target.value || null })}
+          className="text-xs border rounded px-1.5 py-1 shrink-0 max-w-[150px]"
+          title="Mudar nível (categoria pai)"
+        >
+          <option value="">— Raiz —</option>
+          {opcoesPai.filter((o) => !idsExcluidos.has(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+
+        <button onClick={() => setFormAberto(formAberto === node.id ? null : node.id)} className="text-xs text-slate-600 hover:underline shrink-0">+Sub</button>
+        <button onClick={() => onExcluir(node)} className="text-xs text-red-400 hover:text-red-600 shrink-0">×</button>
       </div>
 
-      {formAberto === node.id && (
-        <div style={{ paddingLeft: 8 + (nivel + 1) * 22 }}>
+      {aberto && formAberto === node.id && (
+        <div style={{ paddingLeft: 8 + (nivel + 1) * 20 }}>
           <FormNovaCategoria paiId={node.id} tipoDefault={node.tipo} sinalDefault={node.sinal} onCriar={onCriar} onFechar={() => setFormAberto(null)} />
         </div>
       )}
 
-      {(node.subcategorias ?? []).map((sub) => (
+      {aberto && (node.subcategorias ?? []).map((sub) => (
         <NodoCategoria
           key={sub.id} node={sub} nivel={nivel + 1} irmaos={node.subcategorias!}
           opcoesPai={opcoesPai} formAberto={formAberto} setFormAberto={setFormAberto}

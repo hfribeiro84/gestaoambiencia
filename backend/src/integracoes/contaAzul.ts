@@ -27,10 +27,15 @@ interface AppConfig {
 
 /** Configuração padrão (URLs conhecidas; client_id/secret vêm do banco ou env). */
 const DEFAULTS = {
-  authorize_url: 'https://auth.contaazul.com/login',
+  authorize_url: 'https://auth.contaazul.com/oauth2/authorize',
   token_url: 'https://auth.contaazul.com/oauth2/token',
   api_base: 'https://api-v2.contaazul.com',
 };
+
+// Escopo fixo da API v2 do Conta Azul (AWS Cognito). Os escopos antigos
+// (financas, sales, accounting...) são da API legada e o Cognito os rejeita
+// com uma tela genérica de erro.
+const SCOPE_CA = 'openid profile aws.cognito.signin.user.admin';
 
 function provedor(conta: ContaAzul): Provedor {
   return conta === 'ass' ? 'conta_azul_ass' : 'conta_azul_netr';
@@ -54,9 +59,11 @@ async function resolverAppConfig(conta: ContaAzul): Promise<AppConfig | null> {
   return {
     client_id: clientId,
     client_secret: clientSecret,
-    authorize_url: salvo?.authorize_url || DEFAULTS.authorize_url,
-    token_url: salvo?.token_url || DEFAULTS.token_url,
-    api_base: salvo?.api_base || DEFAULTS.api_base,
+    // URLs e api_base são fixos da plataforma v2 — sempre do código, ignorando
+    // valores legados salvos no banco (ex: o antigo endpoint /login).
+    authorize_url: DEFAULTS.authorize_url,
+    token_url: DEFAULTS.token_url,
+    api_base: DEFAULTS.api_base,
   };
 }
 
@@ -90,8 +97,7 @@ export async function urlAutorizacao(conta: ContaAzul): Promise<string> {
     client_id: cfg.client_id,
     redirect_uri: redirectUri(conta),
     state: provedor(conta),
-    // Escopos necessários para lançamentos financeiros (receitas e despesas)
-    scope: 'financas financeiro sales accounting openid',
+    scope: SCOPE_CA,
   });
   return `${cfg.authorize_url}?${params.toString()}`;
 }

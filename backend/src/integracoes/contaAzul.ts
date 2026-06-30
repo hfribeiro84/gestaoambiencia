@@ -273,10 +273,15 @@ export async function testarConexao(conta: ContaAzul): Promise<ResultadoTeste> {
   const cfg = await resolverAppConfig(conta);
   if (!cfg) return base;
 
+  // Mostra o final do Client ID para o usuário comparar ASS x NETR — se forem
+  // iguais, ambas as contas apontam para o mesmo app OAuth (causa da troca de dados).
+  const idApp = cfg.client_id.length > 6 ? `…${cfg.client_id.slice(-6)}` : cfg.client_id;
+  base.detalhe = `App OAuth (Client ID): ${idApp}`;
+
   try {
     const cred = await lerCredencial(prov);
     if (!cred?.access_token) {
-      return { ...base, mensagem: `Conta Azul ${conta.toUpperCase()} — app configurado, clique em "Conectar" para autorizar.` };
+      return { ...base, status: 'nao_configurado', mensagem: `Conta Azul ${conta.toUpperCase()} — app configurado, clique em "Conectar" para autorizar.` };
     }
 
     let token: string;

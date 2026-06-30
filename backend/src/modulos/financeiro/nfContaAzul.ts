@@ -124,6 +124,8 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
           valor: item.valor_total_nfse ?? 0,
           emitenteNome: emit.nome,
           emitenteCnpj: emit.cnpj,
+          cidadeEmissao: item.cidade_emissao != null ? String(item.cidade_emissao) : undefined,
+          cnae: item.codigo_cnae != null ? String(item.codigo_cnae) : undefined,
         });
       }
 

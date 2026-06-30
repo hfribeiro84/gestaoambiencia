@@ -109,6 +109,11 @@ export async function urlAutorizacao(conta: ContaAzul): Promise<string> {
     redirect_uri: redirectUri(conta),
     state: provedor(conta),
     scope: SCOPE_CA,
+    // Força a tela de login a cada conexão. Sem isso, o Conta Azul reusa a sessão
+    // ativa no navegador e conecta sempre a mesma empresa — fazendo o app da ASS
+    // herdar o token da NETR (e vice-versa). Com prompt=login o usuário escolhe a
+    // empresa correta em cada autorização.
+    prompt: 'login',
   });
   return `${cfg.authorize_url}?${params.toString()}`;
 }

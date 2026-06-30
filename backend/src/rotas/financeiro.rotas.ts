@@ -94,6 +94,15 @@ function anexarDiagnosticoCA(resultado: ResultadoConferencia, nfsEmitidas: NfEmi
     resultado.emitenteCnpj = dominante[0];
     resultado.emitenteNome = dominante[1].nome;
   }
+
+  // Município de emissão dominante (atributo do emitente) — distingue ASS x NETR.
+  const porCidade = new Map<string, number>();
+  for (const nf of nfsEmitidas) {
+    if (!nf.cidadeEmissao) continue;
+    porCidade.set(nf.cidadeEmissao, (porCidade.get(nf.cidadeEmissao) ?? 0) + 1);
+  }
+  resultado.cidadeEmissaoCA = [...porCidade.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+
   resultado.camposCA = nfsEmitidas[0]?._camposCrus;
 }
 

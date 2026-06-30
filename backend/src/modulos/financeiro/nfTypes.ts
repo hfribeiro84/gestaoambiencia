@@ -23,6 +23,10 @@ export interface NfEmitida {
   // Serve para detectar quando o token de uma empresa traz notas de outra.
   emitenteNome?: string;
   emitenteCnpj?: string;
+  // Município/CNAE de emissão — atributos do EMITENTE. Como a lista de NFS-e do
+  // CA não traz o prestador, isso é o que distingue ASS x NETR (cidades distintas).
+  cidadeEmissao?: string;
+  cnae?: string;
   // Diagnóstico: nomes dos campos crus da 1ª nota (só preenchido na primeira).
   _camposCrus?: string[];
 }
@@ -71,6 +75,9 @@ export interface ResultadoConferencia {
   // selecionada, o token conectado pertence à conta errada (ASS x NETR).
   emitenteNome?: string;
   emitenteCnpj?: string;
+  // Município de emissão dominante das notas (atributo do emitente). Distingue
+  // ASS x NETR quando ficam em cidades diferentes.
+  cidadeEmissaoCA?: string;
   // Diagnóstico: nomes dos campos crus da resposta do CA (quando o emitente não
   // for identificável automaticamente).
   camposCA?: string[];

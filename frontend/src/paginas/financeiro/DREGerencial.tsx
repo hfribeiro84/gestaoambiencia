@@ -201,6 +201,7 @@ export function DREGerencial() {
   const [carregandoConfig, setCarregandoConfig] = useState(false);
   const [carregandoCatsCA, setCarregandoCatsCA] = useState(false);
   const [erroConfig, setErroConfig] = useState('');
+  const [erroCatsCA, setErroCatsCA] = useState('');
   const [subtotais, setSubtotais] = useState<DreSubtotal[]>([]);
 
   // ── Carregar último snapshot ao mudar empresa ──────────────────────────────
@@ -318,14 +319,16 @@ export function DREGerencial() {
       setCarregandoConfig(false);
     }
 
-    // Carrega categorias do CA em paralelo (pode demorar)
+    // Carrega categorias do CA em paralelo (pode demorar — busca 12 meses no CA)
     if (empresa !== 'consolidado') {
       setCarregandoCatsCA(true);
+      setErroCatsCA('');
       try {
         const cats = await api<CategoriaCA[]>(`/api/financeiro/dre/categorias-ca/${empresaConfig}`);
         setCatsCA(cats);
-      } catch {
+      } catch (e) {
         setCatsCA([]);
+        setErroCatsCA((e as Error).message);
       } finally {
         setCarregandoCatsCA(false);
       }
@@ -560,6 +563,7 @@ export function DREGerencial() {
           carregando={carregandoConfig}
           carregandoCatsCA={carregandoCatsCA}
           erro={erroConfig}
+          erroCatsCA={erroCatsCA}
           subtotais={subtotais}
           onRemover={removerMapeamento}
           onAdicionarMapeamento={adicionarMapeamentoInline}
@@ -1297,6 +1301,7 @@ interface AbaConfiguracoesProps {
   carregando: boolean;
   carregandoCatsCA: boolean;
   erro: string;
+  erroCatsCA: string;
   subtotais: DreSubtotal[];
   onRemover: (id: string) => void;
   onAdicionarMapeamento: (nomeCA: string, categoriaId: string) => Promise<void>;
@@ -1343,7 +1348,7 @@ function acharCategorias(cats: DreCategoria[], nivel = 0): Array<{ id: string; l
 }
 
 function AbaConfiguracoes({
-  empresa, categorias, mapeamentos, catsCA, carregando, carregandoCatsCA, erro,
+  empresa, categorias, mapeamentos, catsCA, carregando, carregandoCatsCA, erro, erroCatsCA,
   subtotais, onRemover, onAdicionarMapeamento,
   onCriarCategoria, onExcluirCategoria, onCriarSubtotal, onExcluirSubtotal, onSalvarTudoEstrutura,
 }: AbaConfiguracoesProps) {
@@ -1447,6 +1452,7 @@ function AbaConfiguracoes({
         mapeamentos={mapeamentos}
         catsCA={catsCA}
         carregandoCatsCA={carregandoCatsCA}
+        erroCatsCA={erroCatsCA}
         catsCAnaoMapeadas={catsCAnaoMapeadas}
         catsPlanas={catsPlanas}
         pendingCount={pendingCount}
@@ -1579,6 +1585,7 @@ interface EstruturaDREProps {
   mapeamentos: DreMapeamento[];
   catsCA: CategoriaCA[];
   carregandoCatsCA: boolean;
+  erroCatsCA: string;
   catsCAnaoMapeadas: CategoriaCA[];
   catsPlanas: Array<{ id: string; label: string; nivel: number }>;
   pendingCount: number;
@@ -1597,7 +1604,7 @@ interface EstruturaDREProps {
 }
 
 function EstruturaDRE({
-  arvore, mapeamentos, catsCA, carregandoCatsCA, catsCAnaoMapeadas, catsPlanas,
+  arvore, mapeamentos, catsCA, carregandoCatsCA, erroCatsCA, catsCAnaoMapeadas, catsPlanas,
   pendingCount, salvando, onSalvar, onDescartar,
   onCriar, onEditar, onExcluir, onAdicionarMapeamento, onRemoverMapeamento,
   subtotais, onEditarSubtotal, onCriarSubtotal, onExcluirSubtotal,
@@ -1673,6 +1680,22 @@ function EstruturaDRE({
 
       {erro && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">{erro}</div>}
 
+      {carregandoCatsCA && (
+        <div className="mb-3 p-2.5 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700 animate-pulse">
+          Carregando categorias do Conta Azul (12 meses)… os dropdowns de mapeamento aparecem quando terminar.
+        </div>
+      )}
+      {!carregandoCatsCA && erroCatsCA && (
+        <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+          Não foi possível carregar as categorias do Conta Azul: {erroCatsCA}
+        </div>
+      )}
+      {!carregandoCatsCA && !erroCatsCA && catsCA.length === 0 && (
+        <div className="mb-3 p-2.5 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
+          Nenhuma categoria do Conta Azul encontrada nos últimos 12 meses. Verifique a conexão na aba Integrações.
+        </div>
+      )}
+
       {formAberto === '__raiz__' && (
         <FormNovaCategoria
           paiId={null}
@@ -1702,6 +1725,7 @@ function EstruturaDRE({
             onCriar={onCriar}
             mapeamentos={mapeamentos}
             catsCA={catsCA}
+            carregandoCatsCA={carregandoCatsCA}
             onAdicionarMapeamento={onAdicionarMapeamento}
             onRemoverMapeamento={onRemoverMapeamento}
           />
@@ -1794,13 +1818,14 @@ interface NodoCategoriaProps {
   onCriar: (dados: { nome: string; pai_id: string | null; tipo: TipoCategoria; sinal: number }) => Promise<void>;
   mapeamentos: DreMapeamento[];
   catsCA: CategoriaCA[];
+  carregandoCatsCA: boolean;
   onAdicionarMapeamento: (nomeCA: string, categoriaId: string) => Promise<void>;
   onRemoverMapeamento: (id: string) => void;
 }
 
 function NodoCategoria({
   node, nivel, irmaos, opcoesPai, formAberto, setFormAberto, onMover, onEditar, onExcluir, onCriar,
-  mapeamentos, catsCA, onAdicionarMapeamento, onRemoverMapeamento,
+  mapeamentos, catsCA, carregandoCatsCA, onAdicionarMapeamento, onRemoverMapeamento,
 }: NodoCategoriaProps) {
   const [editando, setEditando] = useState(false);
   const [nomeEdit, setNomeEdit] = useState(node.nome);
@@ -1897,8 +1922,10 @@ function NodoCategoria({
         )}
         {mapeandoCA ? (
           <div className="flex items-center gap-1.5 mt-0.5">
-            <select value={novaMapeamentoCA} onChange={(e) => setNovaMapeamentoCA(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 max-w-xs">
-              <option value="">Categoria CA...</option>
+            <select value={novaMapeamentoCA} onChange={(e) => setNovaMapeamentoCA(e.target.value)} disabled={carregandoCatsCA || catsCAlivres.length === 0} className="text-xs border rounded px-2 py-1 flex-1 max-w-xs disabled:bg-gray-50 disabled:text-gray-400">
+              <option value="">
+                {carregandoCatsCA ? 'Carregando categorias CA…' : catsCAlivres.length === 0 ? 'Nenhuma categoria CA disponível' : 'Categoria CA...'}
+              </option>
               {catsCAlivres.map((c) => <option key={c.nome} value={c.nome}>{c.nome} ({c.tipo}, {c.count}×)</option>)}
             </select>
             <button onClick={adicionarMapeamento} disabled={!novaMapeamentoCA || salvandoMap} className="text-xs bg-slate-700 text-white px-2 py-1 rounded disabled:opacity-50 hover:bg-slate-600">
@@ -1924,7 +1951,7 @@ function NodoCategoria({
           key={sub.id} node={sub} nivel={nivel + 1} irmaos={node.subcategorias!}
           opcoesPai={opcoesPai} formAberto={formAberto} setFormAberto={setFormAberto}
           onMover={onMover} onEditar={onEditar} onExcluir={onExcluir} onCriar={onCriar}
-          mapeamentos={mapeamentos} catsCA={catsCA}
+          mapeamentos={mapeamentos} catsCA={catsCA} carregandoCatsCA={carregandoCatsCA}
           onAdicionarMapeamento={onAdicionarMapeamento} onRemoverMapeamento={onRemoverMapeamento}
         />
       ))}

@@ -48,6 +48,9 @@ interface ResultadoConferencia {
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;
+  emitenteNome?: string;
+  emitenteCnpj?: string;
+  camposCA?: string[];
 }
 
 interface PlanilhaSalvaInfo {
@@ -95,6 +98,13 @@ function numeroBR(n: number | null | undefined): string {
 
 function formatBRL(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+/** Formata uma string de dígitos como CNPJ (00.000.000/0000-00) quando possível. */
+function formatCnpj(digitos: string): string {
+  const d = digitos.replace(/\D/g, '');
+  if (d.length !== 14) return digitos;
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
 }
 
 /**
@@ -683,6 +693,28 @@ export function ConferenciaNF() {
           {resultadoEm && (
             <div className="mb-3 text-xs text-gray-400">
               Resultado de {formatDataHora(resultadoEm)}
+            </div>
+          )}
+
+          {/* Diagnóstico: qual empresa do Conta Azul realmente está conectada.
+              Se o emitente das notas não bater com a empresa selecionada, o token
+              conectado é da conta errada (ASS x NETR) — basta reconectar. */}
+          {resultado.totalContaAzul > 0 && (resultado.emitenteNome || resultado.emitenteCnpj) && (
+            <div className="mb-3 p-3 rounded border text-sm bg-blue-50 border-blue-200 text-blue-900">
+              <strong>Notas do Conta Azul emitidas por:</strong>{' '}
+              {resultado.emitenteNome ?? '—'}
+              {resultado.emitenteCnpj && <span className="text-blue-700"> (CNPJ {formatCnpj(resultado.emitenteCnpj)})</span>}
+              <div className="text-xs text-blue-700 mt-1">
+                Confirme que é a empresa <strong>{empresa === 'ass' ? 'Ambiência' : 'NETResíduos'}</strong>.
+                Se for a outra empresa, vá em <strong>Integrações</strong>, clique em <strong>Desconectar</strong> e
+                reconecte com a conta correta do Conta Azul.
+              </div>
+            </div>
+          )}
+          {resultado.totalContaAzul > 0 && !resultado.emitenteNome && !resultado.emitenteCnpj && resultado.camposCA && (
+            <div className="mb-3 p-3 rounded border text-xs bg-amber-50 border-amber-200 text-amber-800">
+              Não foi possível identificar a empresa emitente automaticamente. Campos retornados pelo Conta Azul:{' '}
+              <code className="break-all">{resultado.camposCA.join(', ')}</code>
             </div>
           )}
 

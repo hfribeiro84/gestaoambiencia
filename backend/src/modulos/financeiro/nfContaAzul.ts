@@ -21,6 +21,35 @@ interface ItemNfse {
   nome_cliente: string;
   documento_cliente: string;
   valor_total_nfse: number;
+  [extra: string]: unknown;
+}
+
+/** Só dígitos (normaliza CNPJ/CPF para comparação). */
+function soDigitos(v: unknown): string {
+  return String(v ?? '').replace(/\D/g, '');
+}
+
+/**
+ * Procura, na nota crua do CA, os dados do prestador (empresa emitente).
+ * O CA pode expor isso sob nomes variados (prestador, emitente, etc.) ou não
+ * expor — daí a busca defensiva por chaves que contenham "prestador"/"emitente".
+ */
+function extrairEmitente(raw: Record<string, unknown>): { nome?: string; cnpj?: string } {
+  for (const [chave, valor] of Object.entries(raw)) {
+    const k = chave.toLowerCase();
+    if (!k.includes('prestador') && !k.includes('emitente')) continue;
+
+    // Campo aninhado (objeto com nome/documento) ou valor direto (string)
+    if (valor && typeof valor === 'object') {
+      const obj = valor as Record<string, unknown>;
+      const nome = obj.nome ?? obj.razao_social ?? obj.nome_fantasia;
+      const doc = obj.documento ?? obj.cnpj ?? obj.cpf_cnpj;
+      return { nome: nome != null ? String(nome) : undefined, cnpj: doc != null ? soDigitos(doc) : undefined };
+    }
+    if (k.includes('documento') || k.includes('cnpj')) return { cnpj: soDigitos(valor) };
+    if (k.includes('nome') || k.includes('razao')) return { nome: String(valor) };
+  }
+  return {};
 }
 
 interface RespostaNfse {
@@ -45,6 +74,7 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
   const conta = empresa === 'ass' ? 'ass' : 'netr';
   const nfs: NfEmitida[] = [];
   const idsVistos = new Set<string>();
+  const camposCrus: string[] = [];
 
   for (const periodo of periodos(mes, ano)) {
     let pagina = 1;
@@ -72,11 +102,17 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
       const data = (await resp.json()) as RespostaNfse;
       const itens = data.itens ?? [];
 
+      // Guarda os nomes dos campos da 1ª nota crua (diagnóstico de schema do CA).
+      if (camposCrus.length === 0 && itens.length > 0) {
+        camposCrus.push(...Object.keys(itens[0]));
+      }
+
       for (const item of itens) {
         if (idsVistos.has(item.id)) continue;
         idsVistos.add(item.id);
         if (!STATUS_VALIDOS.has(item.status)) continue;
 
+        const emit = extrairEmitente(item);
         nfs.push({
           id: item.id,
           numero: String(item.numero_nfse ?? ''),
@@ -86,6 +122,8 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
           cliente: item.nome_cliente ?? '',
           cnpj: (item.documento_cliente ?? '').replace(/\D/g, ''),
           valor: item.valor_total_nfse ?? 0,
+          emitenteNome: emit.nome,
+          emitenteCnpj: emit.cnpj,
         });
       }
 
@@ -93,6 +131,9 @@ export async function buscarNfsEmitidas(empresa: Empresa, mes: number, ano: numb
       pagina++;
     }
   }
+
+  // Anexa os campos crus à 1ª nota para diagnóstico no frontend.
+  if (nfs.length > 0 && camposCrus.length > 0) nfs[0]._camposCrus = camposCrus;
 
   return nfs;
 }

@@ -76,6 +76,27 @@ async function buscarCA(empresa: Empresa, mes: number, ano: number) {
   return buscarNfsEmitidas(empresa, mes, ano);
 }
 
+/**
+ * Anexa ao resultado a empresa emitente detectada nas notas do CA (prestador
+ * dominante) e os campos crus de diagnóstico. Permite ao usuário ver na hora se
+ * o token conectado está trazendo notas da empresa errada (ASS x NETR).
+ */
+function anexarDiagnosticoCA(resultado: ResultadoConferencia, nfsEmitidas: NfEmitida[]): void {
+  const porCnpj = new Map<string, { nome?: string; qtd: number }>();
+  for (const nf of nfsEmitidas) {
+    if (!nf.emitenteCnpj) continue;
+    const atual = porCnpj.get(nf.emitenteCnpj) ?? { nome: nf.emitenteNome, qtd: 0 };
+    atual.qtd++;
+    porCnpj.set(nf.emitenteCnpj, atual);
+  }
+  const dominante = [...porCnpj.entries()].sort((a, b) => b[1].qtd - a[1].qtd)[0];
+  if (dominante) {
+    resultado.emitenteCnpj = dominante[0];
+    resultado.emitenteNome = dominante[1].nome;
+  }
+  resultado.camposCA = nfsEmitidas[0]?._camposCrus;
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/financeiro/nf/planilha/:empresa/:mes/:ano
 // ---------------------------------------------------------------------------
@@ -141,6 +162,7 @@ rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => 
       empresa, Number(mes), Number(ano), planilha, nfsEmitidas,
       Number(aliquotaISS), erroApi, erroSalvar, assocExistentes,
     );
+    anexarDiagnosticoCA(resultado, nfsEmitidas);
     salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
     res.json(resultado);
   } catch (e) {
@@ -174,6 +196,7 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
       empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas,
       aliquotaFinal, erroApi, undefined, salva.associacoes_manuais ?? [],
     );
+    anexarDiagnosticoCA(resultado, nfsEmitidas);
     salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
     res.json(resultado);
   } catch (e) {

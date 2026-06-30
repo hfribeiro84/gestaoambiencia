@@ -19,6 +19,12 @@ export interface NfEmitida {
   cnpj?: string;
   valor: number;
   descricao?: string;
+  // Empresa emitente (prestador) da nota — quando o CA informa esse campo.
+  // Serve para detectar quando o token de uma empresa traz notas de outra.
+  emitenteNome?: string;
+  emitenteCnpj?: string;
+  // Diagnóstico: nomes dos campos crus da 1ª nota (só preenchido na primeira).
+  _camposCrus?: string[];
 }
 
 export type StatusConferencia = 'conferido' | 'conferido_diferenca' | 'pendente' | 'nao_esperada';
@@ -61,4 +67,11 @@ export interface ResultadoConferencia {
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;
+  // Empresa emitente detectada nas notas do Conta Azul. Se divergir da empresa
+  // selecionada, o token conectado pertence à conta errada (ASS x NETR).
+  emitenteNome?: string;
+  emitenteCnpj?: string;
+  // Diagnóstico: nomes dos campos crus da resposta do CA (quando o emitente não
+  // for identificável automaticamente).
+  camposCA?: string[];
 }

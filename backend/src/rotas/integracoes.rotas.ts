@@ -87,6 +87,21 @@ rotasIntegracoes.post('/integracoes/:provedor/configurar', autenticar, async (re
   }
 });
 
+// --- Debug: retorna a URL de autorização sem redirecionar ------------------
+rotasIntegracoes.get('/integracoes/:provedor/url-debug', async (req, res) => {
+  const { provedor } = req.params;
+  try {
+    let url: string | null = null;
+    if (provedor === 'conta_azul_ass') url = await contaAzul.urlAutorizacao('ass');
+    else if (provedor === 'conta_azul_netr') url = await contaAzul.urlAutorizacao('netr');
+    if (!url) { res.status(400).json({ erro: 'Provedor sem OAuth' }); return; }
+    const parsed = new URL(url);
+    res.json({ url, params: Object.fromEntries(parsed.searchParams) });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
 // --- OAuth: inicia a autorização (redireciona ao provedor) ------------------
 rotasIntegracoes.get('/integracoes/:provedor/conectar', async (req, res) => {
   const { provedor } = req.params;

@@ -18,8 +18,17 @@ import { executarSincronizacao } from './servicos/sincronizacao';
 
 const app = express();
 
-// CORS: libera o frontend (local ou Vercel em produção).
-app.use(cors({ origin: env.frontendUrl, credentials: true }));
+// CORS: libera as origens do frontend (domínio próprio + Vercel + local).
+app.use(
+  cors({
+    origin(origin, cb) {
+      // Sem Origin (curl, health check, mesmo host) ou origem na lista → libera.
+      if (!origin || env.frontendUrls.includes(origin)) return cb(null, true);
+      cb(new Error(`Origem não permitida pelo CORS: ${origin}`));
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 // Rotas (todas sob /api).
@@ -41,5 +50,5 @@ cron.schedule('0 5 * * *', () => {
 });
 
 app.listen(env.porta, () => {
-  console.log(`API no ar em http://localhost:${env.porta} (CORS: ${env.frontendUrl})`);
+  console.log(`API no ar em http://localhost:${env.porta} (CORS: ${env.frontendUrls.join(', ')})`);
 });

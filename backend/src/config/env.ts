@@ -14,10 +14,21 @@ function ler(nome: string, padrao = ''): string {
   return process.env[nome] ?? padrao;
 }
 
+// FRONTEND_URL aceita múltiplas origens separadas por vírgula (ex.: domínio
+// próprio + URL do Vercel). A primeira é a "principal", usada nos redirects OAuth.
+const frontendUrlsRaw = ler('FRONTEND_URL', 'http://localhost:5173');
+const frontendUrls = frontendUrlsRaw
+  .split(',')
+  .map((u) => u.trim().replace(/\/$/, '')) // remove barra final para casar com o header Origin
+  .filter(Boolean);
+
 export const env = {
   // Servidor
   porta: Number(ler('PORT', '3333')),
-  frontendUrl: ler('FRONTEND_URL', 'http://localhost:5173'),
+  /** URL principal do frontend (primeira da lista) — usada nos redirects OAuth. */
+  frontendUrl: frontendUrls[0] ?? 'http://localhost:5173',
+  /** Todas as origens permitidas no CORS. */
+  frontendUrls,
 
   // Supabase
   supabaseUrl: ler('SUPABASE_URL'),

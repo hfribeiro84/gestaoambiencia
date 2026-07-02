@@ -111,7 +111,7 @@ supabase/migrations/
 | `perfil_usuario`     | 0001 | Estende `auth.users` (nome, papel). |
 | `integracao_config`  | 0001 | Tokens/credenciais por provedor (jsonb). Só backend. |
 | `sync_log`           | 0001 | Auditoria das sincronizações. |
-| `nf_planilha_salva`  | 0002 | Planilhas de NF salvas (NETR). |
+| `nf_planilha_salva`  | 0002/0011 | Planilhas de NF salvas (ASS/NETR), com `fonte_url` opcional (link Google Sheets). |
 | `nf_aliquota_iss`    | 0003 | Alíquotas ISS por município. |
 | `nf_ultimo_resultado`| 0004 | Cache do último resultado de NF por CNPJ. |
 | `dre_categoria`      | 0005 | Árvore de categorias do DRE (pai_id, tipo, sinal, ordem). |

@@ -31,7 +31,7 @@ export const rotasFinanceiro = Router();
 async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
   const { data, error } = await supabaseAdmin
     .from('nf_planilha_salva')
-    .select('itens, aliquota_iss, atualizado_em, ultimo_resultado, resultado_em, associacoes_manuais')
+    .select('itens, aliquota_iss, atualizado_em, ultimo_resultado, resultado_em, associacoes_manuais, fonte_url')
     .eq('empresa', empresa).eq('mes', mes).eq('ano', ano)
     .single();
   if (error || !data) return null;
@@ -42,20 +42,52 @@ async function buscarPlanilhaSalva(empresa: Empresa, mes: number, ano: number) {
     ultimo_resultado: ResultadoConferencia | null;
     resultado_em: string | null;
     associacoes_manuais: AssociacaoManual[];
+    fonte_url: string | null;
   };
 }
 
 async function salvarPlanilha(
   empresa: Empresa, mes: number, ano: number,
-  itens: NfPlanilha[], aliquotaISS: number,
+  itens: NfPlanilha[], aliquotaISS: number, fonteUrl?: string | null,
 ) {
   const { error } = await supabaseAdmin
     .from('nf_planilha_salva')
     .upsert(
-      { empresa, mes, ano, itens, aliquota_iss: aliquotaISS || null, atualizado_em: new Date().toISOString() },
+      {
+        empresa, mes, ano, itens,
+        aliquota_iss: aliquotaISS || null,
+        fonte_url: fonteUrl ?? null,
+        atualizado_em: new Date().toISOString(),
+      },
       { onConflict: 'empresa,mes,ano' },
     );
   if (error) throw new Error(`Erro ao salvar planilha: ${error.message}`);
+}
+
+/**
+ * Busca o CSV de um link de planilha publicada (Google Sheets → Publicar na
+ * Web → CSV). Restrito ao domínio do Google Docs por segurança (evita SSRF a
+ * partir de URL arbitrária informada pelo usuário).
+ */
+async function buscarCsvDeUrl(url: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('Link inválido.');
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'docs.google.com') {
+    throw new Error('Use um link do Google Sheets (docs.google.com) publicado como CSV.');
+  }
+  const resp = await fetch(parsed.toString());
+  if (!resp.ok) {
+    throw new Error(`Falha ao buscar a planilha do link (HTTP ${resp.status}). Confirme que está publicada ("Publicar na Web") no formato CSV.`);
+  }
+  const texto = await resp.text();
+  if (/^\s*<!DOCTYPE html/i.test(texto) || /^\s*<html/i.test(texto)) {
+    throw new Error('O link não retornou um CSV (veio HTML). No Google Sheets, use Arquivo → Compartilhar → Publicar na Web, selecione a aba do mês e o formato CSV.');
+  }
+  return texto;
 }
 
 async function salvarResultado(empresa: Empresa, mes: number, ano: number, resultado: ResultadoConferencia) {
@@ -129,6 +161,7 @@ rotasFinanceiro.get('/financeiro/nf/planilha/:empresa/:mes/:ano', autenticar, as
       atualizado_em: salva.atualizado_em,
       ultimoResultado: salva.ultimo_resultado ?? null,
       resultado_em: salva.resultado_em ?? null,
+      fonteUrl: salva.fonte_url ?? null,
     });
   } catch (e) {
     res.json(null);
@@ -139,27 +172,36 @@ rotasFinanceiro.get('/financeiro/nf/planilha/:empresa/:mes/:ano', autenticar, as
 // POST /api/financeiro/nf/conferir  — upload CSV → salva → busca CA
 // ---------------------------------------------------------------------------
 rotasFinanceiro.post('/financeiro/nf/conferir', autenticar, async (req, res) => {
-  const { empresa, mes, ano, csv, aliquotaISS = 0 } = req.body as {
-    empresa: Empresa; mes: number; ano: number; csv: string; aliquotaISS?: number;
+  const { empresa, mes, ano, csv, url, aliquotaISS = 0 } = req.body as {
+    empresa: Empresa; mes: number; ano: number; csv?: string; url?: string; aliquotaISS?: number;
   };
 
-  if (!empresa || !mes || !ano || !csv) {
-    res.status(400).json({ erro: 'Campos obrigatórios: empresa, mes, ano, csv.' }); return;
+  if (!empresa || !mes || !ano || (!csv && !url)) {
+    res.status(400).json({ erro: 'Campos obrigatórios: empresa, mes, ano, e csv ou url.' }); return;
   }
   if (empresa !== 'ass' && empresa !== 'netr') {
     res.status(400).json({ erro: 'empresa deve ser "ass" ou "netr".' }); return;
   }
 
+  let csvTexto = csv;
+  if (url) {
+    try {
+      csvTexto = await buscarCsvDeUrl(url);
+    } catch (e) {
+      res.status(400).json({ erro: (e as Error).message }); return;
+    }
+  }
+
   let planilha: NfPlanilha[];
   try {
-    planilha = empresa === 'ass' ? parseCsvAss(csv) : parseCsvNetr(csv);
+    planilha = empresa === 'ass' ? parseCsvAss(csvTexto!) : parseCsvNetr(csvTexto!);
   } catch (e) {
     res.status(400).json({ erro: `Erro ao ler CSV: ${(e as Error).message}` }); return;
   }
 
   let erroSalvar: string | undefined;
   try {
-    await salvarPlanilha(empresa, Number(mes), Number(ano), planilha, Number(aliquotaISS));
+    await salvarPlanilha(empresa, Number(mes), Number(ano), planilha, Number(aliquotaISS), url ?? null);
   } catch (e) {
     erroSalvar = (e as Error).message;
   }
@@ -202,8 +244,21 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
     }
 
     const aliquotaFinal = aliquotaISS || salva.aliquota_iss || 0;
-    if (aliquotaISS && aliquotaISS !== salva.aliquota_iss) {
-      try { await salvarPlanilha(empresa, Number(mes), Number(ano), salva.itens, aliquotaISS); } catch (_) { /* ok */ }
+
+    // Se a planilha tem um link salvo (Google Sheets publicado), busca de novo
+    // antes de comparar — assim "Atualizar" já traz as edições mais recentes.
+    let itens = salva.itens;
+    let erroPlanilha: string | undefined;
+    if (salva.fonte_url) {
+      try {
+        const csvTexto = await buscarCsvDeUrl(salva.fonte_url);
+        itens = empresa === 'ass' ? parseCsvAss(csvTexto) : parseCsvNetr(csvTexto);
+        await salvarPlanilha(empresa, Number(mes), Number(ano), itens, aliquotaFinal, salva.fonte_url);
+      } catch (e) {
+        erroPlanilha = (e as Error).message;
+      }
+    } else if (aliquotaISS && aliquotaISS !== salva.aliquota_iss) {
+      try { await salvarPlanilha(empresa, Number(mes), Number(ano), itens, aliquotaISS, salva.fonte_url); } catch (_) { /* ok */ }
     }
 
     let nfsEmitidas: Awaited<ReturnType<typeof buscarCA>> = [];
@@ -211,9 +266,10 @@ rotasFinanceiro.get('/financeiro/nf/conferir/:empresa/:mes/:ano', autenticar, as
     try { nfsEmitidas = await buscarCA(empresa, Number(mes), Number(ano)); } catch (e) { erroApi = (e as Error).message; }
 
     const resultado = calcularResultado(
-      empresa, Number(mes), Number(ano), salva.itens, nfsEmitidas,
+      empresa, Number(mes), Number(ano), itens, nfsEmitidas,
       aliquotaFinal, erroApi, undefined, salva.associacoes_manuais ?? [],
     );
+    if (erroPlanilha) resultado.erroPlanilha = erroPlanilha;
     anexarDiagnosticoCA(resultado, nfsEmitidas);
     salvarResultado(empresa, Number(mes), Number(ano), resultado).catch(() => {});
     res.json(resultado);

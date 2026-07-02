@@ -48,6 +48,7 @@ interface ResultadoConferencia {
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;
+  erroPlanilha?: string;
   emitenteNome?: string;
   emitenteCnpj?: string;
   cidadeEmissaoCA?: string;
@@ -61,6 +62,7 @@ interface PlanilhaSalvaInfo {
   atualizado_em: string;
   ultimoResultado?: ResultadoConferencia;
   resultado_em?: string;
+  fonteUrl?: string | null;
 }
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -373,6 +375,8 @@ export function ConferenciaNF() {
   const [nomeArquivo, setNomeArquivo] = useState('');
   const [csvContent, setCsvContent] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [modoFonte, setModoFonte] = useState<'link' | 'csv'>('link');
+  const [linkPlanilha, setLinkPlanilha] = useState('');
 
   const [carregando, setCarregando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
@@ -393,6 +397,8 @@ export function ConferenciaNF() {
       const info = await api<PlanilhaSalvaInfo | null>(`/api/financeiro/nf/planilha/${empresa}/${mes}/${ano}`);
       setPlanilhaSalva(info);
       if (info?.aliquotaISS) setAliquotaISS(info.aliquotaISS);
+      setLinkPlanilha(info?.fonteUrl ?? '');
+      setModoFonte(info?.fonteUrl ? 'link' : 'csv');
       setResultado(info?.ultimoResultado ?? null);
       setResultadoEm(info?.resultado_em ?? null);
       setFiltro('todos');
@@ -440,6 +446,28 @@ export function ConferenciaNF() {
       setModoSubstituir(false);
       setNomeArquivo('');
       setCsvContent('');
+      if (!r.erroSalvar) carregarInfo();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function conferirComLink() {
+    if (!linkPlanilha.trim()) { setErro('Cole o link da planilha publicada.'); return; }
+    setCarregando(true);
+    setErro('');
+    setResultado(null);
+    try {
+      const r = await api<ResultadoConferencia>('/api/financeiro/nf/conferir', {
+        method: 'POST',
+        body: JSON.stringify({ empresa, mes, ano, url: linkPlanilha.trim(), aliquotaISS }),
+      });
+      setResultado(r);
+      setResultadoEm(new Date().toISOString());
+      setFiltro('todos');
+      setModoSubstituir(false);
       if (!r.erroSalvar) carregarInfo();
     } catch (e) {
       setErro((e as Error).message);
@@ -609,6 +637,7 @@ export function ConferenciaNF() {
               </div>
               <div className="text-xs text-gray-400 mt-0.5">
                 Atualizada em {formatDataHora(planilhaSalva.atualizado_em)}
+                {planilhaSalva.fonteUrl && <span className="ml-2 text-ambiencia">· via link do Google Sheets</span>}
               </div>
             </div>
             <button
@@ -616,60 +645,108 @@ export function ConferenciaNF() {
               disabled={carregando}
               className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
             >
-              {carregando ? 'Consultando...' : 'Atualizar Conta Azul'}
+              {carregando
+                ? (planilhaSalva.fonteUrl ? 'Atualizando planilha e Conta Azul...' : 'Consultando...')
+                : (planilhaSalva.fonteUrl ? 'Atualizar' : 'Atualizar Conta Azul')}
             </button>
             <button
               onClick={() => setModoSubstituir(true)}
               className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm hover:border-gray-400 whitespace-nowrap"
             >
-              Substituir planilha
+              {planilhaSalva.fonteUrl ? 'Trocar fonte' : 'Substituir planilha'}
             </button>
           </div>
         ) : (
-          <div className="flex items-end gap-3 flex-wrap">
-            <div className="flex-1 min-w-0">
-              <label className="block text-xs text-gray-500 mb-1">Planilha CSV</label>
-              <input
-                ref={inputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) { setNomeArquivo(file.name); setCsvContent(await lerArquivoTexto(file)); }
-                  else { setNomeArquivo(''); setCsvContent(''); }
-                }}
-              />
+          <div>
+            <div className="flex gap-1 mb-3">
               <button
-                onClick={() => inputRef.current?.click()}
-                className="w-full border rounded px-3 py-2 text-sm text-left truncate text-gray-600 hover:border-ambiencia"
+                onClick={() => setModoFonte('link')}
+                className={`px-3 py-1.5 rounded text-xs font-medium border ${modoFonte === 'link' ? 'bg-ambiencia text-white border-ambiencia' : 'bg-white text-gray-600 border-gray-300'}`}
               >
-                {nomeArquivo || 'Selecionar arquivo...'}
+                Link do Google Sheets
+              </button>
+              <button
+                onClick={() => setModoFonte('csv')}
+                className={`px-3 py-1.5 rounded text-xs font-medium border ${modoFonte === 'csv' ? 'bg-ambiencia text-white border-ambiencia' : 'bg-white text-gray-600 border-gray-300'}`}
+              >
+                Arquivo CSV
               </button>
             </div>
-            <button
-              onClick={conferirComCsv}
-              disabled={carregando || !csvContent}
-              className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
-            >
-              {carregando ? 'Consultando...' : 'Conferir'}
-            </button>
-            {csvContent && (
-              <button
-                onClick={verPreviewCsv}
-                disabled={carregando}
-                className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
-              >
-                Preview CSV
-              </button>
-            )}
-            {modoSubstituir && (
-              <button
-                onClick={() => { setModoSubstituir(false); setNomeArquivo(''); setCsvContent(''); }}
-                className="text-sm text-gray-400 hover:text-gray-600 px-2 py-2"
-              >
-                Cancelar
-              </button>
+
+            {modoFonte === 'link' ? (
+              <div className="flex items-end gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Link da aba publicada (Arquivo → Compartilhar → Publicar na Web → escolha a aba do mês → formato CSV)
+                  </label>
+                  <input
+                    type="url"
+                    value={linkPlanilha}
+                    onChange={(e) => setLinkPlanilha(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=...&single=true&output=csv"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <button
+                  onClick={conferirComLink}
+                  disabled={carregando || !linkPlanilha.trim()}
+                  className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
+                >
+                  {carregando ? 'Buscando...' : 'Conferir'}
+                </button>
+                {modoSubstituir && (
+                  <button onClick={() => setModoSubstituir(false)} className="text-sm text-gray-400 hover:text-gray-600 px-2 py-2">
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-end gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <label className="block text-xs text-gray-500 mb-1">Planilha CSV</label>
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept=".csv"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) { setNomeArquivo(file.name); setCsvContent(await lerArquivoTexto(file)); }
+                      else { setNomeArquivo(''); setCsvContent(''); }
+                    }}
+                  />
+                  <button
+                    onClick={() => inputRef.current?.click()}
+                    className="w-full border rounded px-3 py-2 text-sm text-left truncate text-gray-600 hover:border-ambiencia"
+                  >
+                    {nomeArquivo || 'Selecionar arquivo...'}
+                  </button>
+                </div>
+                <button
+                  onClick={conferirComCsv}
+                  disabled={carregando || !csvContent}
+                  className="bg-ambiencia text-white px-5 py-2 rounded font-medium disabled:opacity-50 whitespace-nowrap"
+                >
+                  {carregando ? 'Consultando...' : 'Conferir'}
+                </button>
+                {csvContent && (
+                  <button
+                    onClick={verPreviewCsv}
+                    disabled={carregando}
+                    className="border border-gray-300 text-gray-600 px-4 py-2 rounded text-sm disabled:opacity-50 hover:border-gray-400"
+                  >
+                    Preview CSV
+                  </button>
+                )}
+                {modoSubstituir && (
+                  <button
+                    onClick={() => { setModoSubstituir(false); setNomeArquivo(''); setCsvContent(''); }}
+                    className="text-sm text-gray-400 hover:text-gray-600 px-2 py-2"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -683,6 +760,11 @@ export function ConferenciaNF() {
           {resultado.erroApi && (
             <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
               <strong>Aviso:</strong> Não foi possível consultar o Conta Azul ({resultado.erroApi}).
+            </div>
+          )}
+          {resultado.erroPlanilha && (
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+              <strong>Aviso:</strong> Não foi possível atualizar a planilha pelo link ({resultado.erroPlanilha}). Mostrando os últimos dados salvos.
             </div>
           )}
           {resultado.erroSalvar && (

@@ -71,6 +71,9 @@ export interface ResultadoConferencia {
   itens: ItemConferencia[];
   erroApi?: string;
   erroSalvar?: string;
+  // Falha ao buscar/ler a planilha a partir do link salvo (Google Sheets). Quando
+  // ocorre, os dados exibidos são da última planilha conhecida (não atualizada).
+  erroPlanilha?: string;
   // Empresa emitente detectada nas notas do Conta Azul. Se divergir da empresa
   // selecionada, o token conectado pertence à conta errada (ASS x NETR).
   emitenteNome?: string;

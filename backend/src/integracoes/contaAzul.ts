@@ -202,6 +202,33 @@ const CA_BASES_FALLBACK = [
   'https://api-v2.contaazul.com',
 ];
 
+// Throttle global: o CA limita a 600/min e 10/s. Espaçamos as chamadas em ~130ms
+// (~7-8/s, ~460/min) para não estourar, e ainda tratamos 429 com backoff.
+const INTERVALO_MIN_MS = 130;
+let proximoSlot = 0;
+async function aguardarSlot(): Promise<void> {
+  const agora = Date.now();
+  const inicio = Math.max(agora, proximoSlot);
+  proximoSlot = inicio + INTERVALO_MIN_MS;
+  const espera = inicio - agora;
+  if (espera > 0) await new Promise((r) => setTimeout(r, espera));
+}
+
+/** fetch com throttle + retry em 429 (rate limit) e 5xx transitórios. */
+async function fetchCA(url: string, headers: Record<string, string>): Promise<Response> {
+  const MAX_TENTATIVAS = 5;
+  for (let tentativa = 0; ; tentativa++) {
+    await aguardarSlot();
+    const resp = await fetch(url, { headers });
+    const transitorio = resp.status === 429 || (resp.status >= 500 && resp.status < 600);
+    if (!transitorio || tentativa >= MAX_TENTATIVAS) return resp;
+    const retryAfter = Number(resp.headers.get('retry-after'));
+    const espera = retryAfter > 0 ? retryAfter * 1000 : Math.min(16_000, 1000 * 2 ** tentativa);
+    console.warn(`[CA] ${resp.status} em ${url} — aguardando ${espera}ms (tentativa ${tentativa + 1})`);
+    await new Promise((r) => setTimeout(r, espera));
+  }
+}
+
 /** Executa uma chamada autenticada à API do Conta Azul.
  *  Se a URL configurada retornar 404, tenta bases alternativas automaticamente
  *  e cacheia qual funciona para as próximas chamadas da mesma sessão. */
@@ -220,11 +247,11 @@ export async function chamadaApi(
   // Se já descobrimos qual base funciona, usa direto
   const baseConhecida = apiBaseOk.get(conta);
   if (baseConhecida) {
-    return fetch(`${baseConhecida}${endpoint}${qs}`, { headers });
+    return fetchCA(`${baseConhecida}${endpoint}${qs}`, headers);
   }
 
   // Tenta a URL configurada primeiro
-  const resp = await fetch(`${cfg.api_base}${endpoint}${qs}`, { headers });
+  const resp = await fetchCA(`${cfg.api_base}${endpoint}${qs}`, headers);
 
   // Erros de autenticação/permissão (401, 403) e sucesso (2xx, 404) não precisam de fallback
   if (resp.ok || resp.status === 401 || resp.status === 403 || resp.status === 404) {
@@ -235,7 +262,7 @@ export async function chamadaApi(
   // Para outros erros (5xx, etc.) tenta bases alternativas — só aceita se der 2xx ou 404
   for (const base of CA_BASES_FALLBACK) {
     if (base === cfg.api_base) continue;
-    const alt = await fetch(`${base}${endpoint}${qs}`, { headers });
+    const alt = await fetchCA(`${base}${endpoint}${qs}`, headers);
     if (alt.ok || alt.status === 404) {
       console.log(`[CA ${conta}] URL base corrigida para: ${base}`);
       apiBaseOk.set(conta, base);

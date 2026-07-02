@@ -73,16 +73,6 @@ function extrairItens(data: unknown): Record<string, unknown>[] {
   return [];
 }
 
-/** Total de itens da consulta (v2 usa `itens_totais`). */
-function extrairTotalItens(data: unknown): number {
-  if (!data || typeof data !== 'object') return 0;
-  const d = data as Record<string, unknown>;
-  if (typeof d.itens_totais === 'number') return d.itens_totais;
-  if (typeof d.total_itens === 'number') return d.total_itens;
-  if (typeof d.totalItens === 'number') return d.totalItens;
-  return 0;
-}
-
 // ──────────────────────────────────────────────────────────────
 // Busca paginada genérica
 // ──────────────────────────────────────────────────────────────
@@ -119,14 +109,9 @@ async function buscarPaginado(
     const itens = extrairItens(data);
     todos.push(...itens);
 
-    const totalItens = extrairTotalItens(data);
-    if (
-      itens.length === 0 ||
-      itens.length < TAMANHO_PAGINA ||
-      (totalItens > 0 && todos.length >= totalItens)
-    ) {
-      break;
-    }
+    // Continua enquanto vier página cheia. NÃO usa `itens_totais` como parada —
+    // ele às vezes vem subestimado e cortava meses do resultado. Trava de segurança.
+    if (itens.length < TAMANHO_PAGINA || pagina >= 200) break;
     pagina++;
   }
 

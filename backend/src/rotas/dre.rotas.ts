@@ -328,7 +328,7 @@ rotasDre.delete('/financeiro/dre/snapshots/:empresa/:id', autenticar, async (req
 rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
   try {
     const { empresa } = req.params;
-    const { de, ate } = req.body as { de?: string; ate?: string };
+    const { de, ate, saldoInicial } = req.body as { de?: string; ate?: string; saldoInicial?: number };
 
     if (empresa !== 'ass' && empresa !== 'netr') {
       res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
@@ -343,7 +343,8 @@ rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Reques
       return;
     }
 
-    const extrato = await gerarESalvarExtrato(empresa, de, ate);
+    const saldo = typeof saldoInicial === 'number' ? saldoInicial : undefined;
+    const extrato = await gerarESalvarExtrato(empresa, de, ate, saldo);
     res.json(extrato);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
@@ -672,61 +673,6 @@ rotasDre.get('/financeiro/dre/debug/amostra/:empresa/:mes/:ano', autenticar, asy
     const despesas = lancamentos.filter((l) => l.tipo === 'despesa').slice(0, 2);
 
     res.json({ empresa, mes, ano, amostraReceitas: receitas, amostraDespesas: despesas });
-  } catch (e) {
-    res.status(500).json({ erro: (e as Error).message });
-  }
-});
-
-// ──────────────────────────────────────────────────────────────
-// GET /financeiro/dre/debug/extrato-diag/:empresa  (TEMPORÁRIO, público)
-// Diagnostica: (1) resposta crua do saldo inicial; (2) se o CA devolve parcelas
-// com vencimento futuro além de ~1 mês.
-// ──────────────────────────────────────────────────────────────
-rotasDre.get('/financeiro/dre/debug/extrato-diag/:empresa', async (req: Request, res: Response) => {
-  try {
-    const { empresa } = req.params;
-    if (empresa !== 'ass' && empresa !== 'netr') {
-      res.status(400).json({ erro: 'Use ass ou netr.' });
-      return;
-    }
-    const conta = contaCA(empresa);
-    const hoje = new Date().toISOString().slice(0, 10);
-    const [y, m, d] = hoje.split('-').map(Number);
-    const mais18 = new Date(Date.UTC(y, m - 1 + 18, d)).toISOString().slice(0, 10);
-
-    // (1) Saldo inicial — agora com data-HORA (ISO 8601), pra ver a resposta crua.
-    let saldo: Record<string, unknown>;
-    try {
-      const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/saldo-inicial', {
-        data_inicio: `${hoje}T00:00:00`, data_fim: `${hoje}T23:59:59`,
-      });
-      const t = await r.text();
-      let corpo: unknown;
-      try { corpo = JSON.parse(t); } catch { corpo = t.slice(0, 400); }
-      saldo = { status: r.status, corpo };
-    } catch (e) {
-      saldo = { erro: (e as Error).message };
-    }
-
-    // (2) Parcelas a pagar futuras — pagina 4 vezes p/ ver se o vencimento avança.
-    const paginas: Record<string, unknown>[] = [];
-    for (let pagina = 1; pagina <= 4; pagina++) {
-      try {
-        const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar', {
-          data_vencimento_de: hoje, data_vencimento_ate: mais18, pagina: String(pagina), tamanho_pagina: '200',
-        });
-        const b = JSON.parse(await r.text()) as { itens?: Record<string, unknown>[]; itens_totais?: number };
-        const itens = b.itens ?? [];
-        const vencs = itens.map((i) => String(i.data_vencimento ?? '')).filter(Boolean).sort();
-        paginas.push({ pagina, itens_totais: b.itens_totais, qtd: itens.length, vencMin: vencs[0] ?? null, vencMax: vencs[vencs.length - 1] ?? null });
-        if (itens.length < 200) break;
-      } catch (e) {
-        paginas.push({ pagina, erro: (e as Error).message });
-        break;
-      }
-    }
-
-    res.json({ empresa, hoje, mais18, saldo, paginas });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

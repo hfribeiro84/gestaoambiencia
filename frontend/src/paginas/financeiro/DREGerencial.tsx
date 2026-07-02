@@ -216,6 +216,7 @@ export function DREGerencial() {
   const [extratoMeta, setExtratoMeta] = useState<MetaExtrato | null>(null);
   const [extratoDe, setExtratoDe] = useState('');
   const [extratoAte, setExtratoAte] = useState('');
+  const [extratoSaldoInicial, setExtratoSaldoInicial] = useState('');
   const [modalExtrato, setModalExtrato] = useState(false);
   const [atualizandoExtrato, setAtualizandoExtrato] = useState(false);
   const [carregandoExtrato, setCarregandoExtrato] = useState(false);
@@ -308,7 +309,7 @@ export function DREGerencial() {
       const emp = empresa === 'consolidado' ? 'ass' : empresa;
       const ext = await api<ExtratoSalvo | null>(`/api/financeiro/dre/extrato/${emp}`);
       setExtratoSalvo(ext);
-      if (ext) { setExtratoDe(ext.periodoDe); setExtratoAte(ext.periodoAte); }
+      if (ext) { setExtratoDe(ext.periodoDe); setExtratoAte(ext.periodoAte); setExtratoSaldoInicial(String(ext.saldoInicial ?? 0)); }
     } catch (e) {
       setErroExtrato((e as Error).message);
       setExtratoSalvo(null);
@@ -327,9 +328,14 @@ export function DREGerencial() {
     setAtualizandoExtrato(true);
     setErroExtrato('');
     try {
+      const saldoNum = parseFloat(extratoSaldoInicial.replace(',', '.'));
       const ext = await api<ExtratoSalvo>(`/api/financeiro/dre/extrato/${empresaExtrato}`, {
         method: 'POST',
-        body: JSON.stringify({ de: extratoDe, ate: extratoAte }),
+        body: JSON.stringify({
+          de: extratoDe,
+          ate: extratoAte,
+          ...(Number.isNaN(saldoNum) ? {} : { saldoInicial: saldoNum }),
+        }),
       });
       setExtratoSalvo(ext);
       setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm });
@@ -587,6 +593,8 @@ export function DREGerencial() {
           ate={extratoAte}
           setDe={setExtratoDe}
           setAte={setExtratoAte}
+          saldoInicial={extratoSaldoInicial}
+          setSaldoInicial={setExtratoSaldoInicial}
           atualizando={atualizandoExtrato}
           onAbrirModal={() => setModalExtrato(true)}
           onFecharModal={() => setModalExtrato(false)}
@@ -1261,6 +1269,7 @@ interface AbaExtratoProps {
   modalAberto: boolean;
   de: string; ate: string;
   setDe: (v: string) => void; setAte: (v: string) => void;
+  saldoInicial: string; setSaldoInicial: (v: string) => void;
   atualizando: boolean;
   onAbrirModal: () => void;
   onFecharModal: () => void;
@@ -1269,7 +1278,7 @@ interface AbaExtratoProps {
 
 function AbaExtrato({
   empresa, extrato, meta, carregando, erro, modalAberto,
-  de, ate, setDe, setAte, atualizando, onAbrirModal, onFecharModal, onAtualizar,
+  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar,
 }: AbaExtratoProps) {
   return (
     <div>
@@ -1365,6 +1374,18 @@ function AbaExtrato({
                 <label className="block text-xs text-gray-500 mb-1">Fim</label>
                 <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm" />
               </div>
+            </div>
+            <div className="mt-3">
+              <label className="block text-xs text-gray-500 mb-1">Saldo inicial na data de início (R$)</label>
+              <input
+                type="number" step="0.01" value={saldoInicial}
+                onChange={(e) => setSaldoInicial(e.target.value)}
+                placeholder="0,00"
+                className="w-full border rounded px-2 py-1.5 text-sm"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">
+                O Conta Azul não fornece o saldo de uma data qualquer — informe o saldo bancário no dia de início. O extrato acumula a partir dele.
+              </p>
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={onFecharModal} disabled={atualizando} className="text-sm text-gray-500 px-3 py-2 hover:underline disabled:opacity-50">Cancelar</button>

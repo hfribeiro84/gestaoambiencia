@@ -105,7 +105,7 @@ export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResu
  * Calcula o saldo corrente (realizado + projeção) e SALVA no banco, substituindo
  * o extrato anterior. Também grava o snapshot de atrasados.
  */
-export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string): Promise<ExtratoSalvo> {
+export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string, saldoInicialManual?: number): Promise<ExtratoSalvo> {
   const hoje = hojeISO();
   const ontem = addDias(hoje, -1);
   const caixaAte = ate < ontem ? ate : ontem; // realizado vai até ontem (ou fim, se antes)
@@ -156,10 +156,12 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
     }
   }
 
-  const [saldoInicial, atrasados] = await Promise.all([
-    buscarSaldoInicial(empresa, de),
-    calcularAtrasados(empresa),
-  ]);
+  // Saldo inicial: usa o valor informado pelo usuário; se não vier, tenta o CA
+  // (que normalmente não devolve saldo de data arbitrária) e cai para 0.
+  const atrasados = await calcularAtrasados(empresa);
+  const saldoInicial = saldoInicialManual != null && !Number.isNaN(saldoInicialManual)
+    ? saldoInicialManual
+    : await buscarSaldoInicial(empresa, de);
 
   eventos.sort((a, b) => a.data.localeCompare(b.data));
 

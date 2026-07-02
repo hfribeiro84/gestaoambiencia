@@ -12,11 +12,6 @@ const EP_RECEITAS = '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar'
 const EP_DESPESAS = '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar';
 const EP_TRANSFERENCIAS = '/v1/financeiro/transferencias';
 
-// Endpoints que trazem as parcelas COM as baixas embutidas (itens.baixas) —
-// usados para o regime de caixa (data real do pagamento/recebimento).
-const EP_CONTAS_RECEBER = '/v1/financeiro/contas-a-receber';
-const EP_CONTAS_PAGAR = '/v1/financeiro/contas-a-pagar';
-
 // tamanho_pagina aceita apenas: 10, 20, 50, 100, 200, 500, 1000
 const TAMANHO_PAGINA = 200;
 
@@ -215,27 +210,14 @@ export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promis
 }
 
 // ──────────────────────────────────────────────────────────────
-// Parcelas com baixas (regime de caixa)
+// Parcelas + baixas (regime de caixa)
+// A lista (/buscar) NÃO traz as baixas; a data real de pagamento vem de
+// GET /v1/financeiro/eventos-financeiros/parcelas/{id}/baixa (campo data_pagamento
+// e valor_composicao.valor_liquido). Então: lista parcelas por vencimento e
+// enriquece as PAGAS (pago > 0) com suas baixas.
 // ──────────────────────────────────────────────────────────────
 
-/** Extrai as baixas (pagamentos/recebimentos) de uma parcela crua, de forma
- *  defensiva (o CA pode nomear os campos de formas diferentes). */
-function extrairBaixas(item: Record<string, unknown>): BaixaCA[] {
-  const arr = (item.baixas ?? item.pagamentos ?? item.recebimentos) as unknown;
-  if (!Array.isArray(arr)) return [];
-  return arr
-    .map((b) => {
-      const o = b as Record<string, unknown>;
-      const data = (o.data_baixa ?? o.data_pagamento ?? o.data_recebimento ?? o.data ?? '') as string;
-      const valor = Number(o.valor ?? o.valor_baixa ?? o.valor_pago ?? o.total ?? 0);
-      return { data: String(data).slice(0, 10), valor };
-    })
-    .filter((b) => b.data && b.valor);
-}
-
 function mapearParcela(item: Record<string, unknown>, tipo: 'receita' | 'despesa'): ParcelaCA {
-  const baixas = extrairBaixas(item);
-  const totalBaixado = baixas.reduce((s, b) => s + Math.abs(b.valor), 0);
   return {
     id: extrairId(item),
     tipo,
@@ -244,28 +226,58 @@ function mapearParcela(item: Record<string, unknown>, tipo: 'receita' | 'despesa
     valorTotal: Math.abs(extrairValor(item)),
     dataVencimento: extrairDataVencimento(item),
     dataCompetencia: extrairDataCompetencia(item),
-    totalBaixado,
-    baixas,
+    totalBaixado: Math.abs(Number(item.pago ?? 0)),
+    baixas: [],
   };
 }
 
-/**
- * Busca parcelas (com baixas embutidas) por janela de VENCIMENTO. Como a API não
- * filtra por data de pagamento, o chamador amplia a janela e depois filtra as
- * baixas pela data real. `tipo` decide o endpoint (receber/pagar).
- */
-export async function buscarParcelasComBaixas(
+/** Lista parcelas por janela de vencimento (sem baixas — usa /buscar). */
+export async function buscarParcelas(
   empresa: ContaCA,
   tipo: 'receita' | 'despesa',
   de: string,
   ate: string,
 ): Promise<ParcelaCA[]> {
-  const endpoint = tipo === 'receita' ? EP_CONTAS_RECEBER : EP_CONTAS_PAGAR;
+  const endpoint = tipo === 'receita' ? EP_RECEITAS : EP_DESPESAS;
   const itens = await buscarPaginado(empresa, endpoint, {
     data_vencimento_de: de,
     data_vencimento_ate: ate,
   });
   return itens.map((i) => mapearParcela(i, tipo));
+}
+
+/** Busca as baixas (pagamentos/recebimentos) de uma parcela pelo ID. */
+export async function buscarBaixasDaParcela(empresa: ContaCA, parcelaId: string): Promise<BaixaCA[]> {
+  const r = await chamadaApi(empresa, `/v1/financeiro/eventos-financeiros/parcelas/${parcelaId}/baixa`);
+  if (!r.ok) return [];
+  const corpo = (await r.json()) as unknown;
+  const arr = Array.isArray(corpo)
+    ? corpo
+    : (((corpo as Record<string, unknown>)?.itens ?? (corpo as Record<string, unknown>)?.baixas) as unknown);
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((b) => {
+      const o = b as Record<string, unknown>;
+      const vc = o.valor_composicao as Record<string, unknown> | undefined;
+      return {
+        data: String(o.data_pagamento ?? o.data_baixa ?? o.data ?? '').slice(0, 10),
+        valor: Number(vc?.valor_liquido ?? vc?.valor_bruto ?? o.valor ?? 0),
+      };
+    })
+    .filter((b) => b.data && b.valor);
+}
+
+/** Enriquece as parcelas PAGAS com suas baixas (concorrência limitada p/ rate limit). */
+export async function enriquecerComBaixas(empresa: ContaCA, parcelas: ParcelaCA[], limite = 6): Promise<void> {
+  const pagas = parcelas.filter((p) => p.totalBaixado > 0.005 && p.id);
+  let i = 0;
+  const worker = async () => {
+    while (i < pagas.length) {
+      const p = pagas[i++];
+      p.baixas = await buscarBaixasDaParcela(empresa, p.id);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limite, pagas.length) }, worker));
 }
 
 /** Busca transferências entre contas financeiras no período. */

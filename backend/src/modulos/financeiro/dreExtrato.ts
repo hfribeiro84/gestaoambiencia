@@ -11,7 +11,7 @@
  * junto do extrato — informativo, não entra no saldo de caixa.
  */
 import { supabaseAdmin } from '../../config/supabase';
-import { buscarSaldoInicial, buscarParcelasComBaixas } from './dreContaAzul';
+import { buscarSaldoInicial, buscarParcelas, enriquecerComBaixas } from './dreContaAzul';
 import type {
   LancamentoCA,
   ItemExtratoSalvo,
@@ -77,8 +77,8 @@ export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResu
   const de = addMeses(hoje, -MARGEM_ATRASADOS_MESES);
 
   const [rec, pag] = await Promise.all([
-    buscarParcelasComBaixas(empresa, 'receita', de, hoje),
-    buscarParcelasComBaixas(empresa, 'despesa', de, hoje),
+    buscarParcelas(empresa, 'receita', de, hoje),
+    buscarParcelas(empresa, 'despesa', de, hoje),
   ]);
 
   const aReceber = atrasadosDeParcelas(rec, hoje);
@@ -105,9 +105,15 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
 
   const [saldoInicial, parcelasRec, parcelasPag, atrasados] = await Promise.all([
     buscarSaldoInicial(empresa, de),
-    buscarParcelasComBaixas(empresa, 'receita', vencDe, vencAte),
-    buscarParcelasComBaixas(empresa, 'despesa', vencDe, vencAte),
+    buscarParcelas(empresa, 'receita', vencDe, vencAte),
+    buscarParcelas(empresa, 'despesa', vencDe, vencAte),
     calcularAtrasados(empresa),
+  ]);
+
+  // Enriquece as parcelas pagas com suas baixas (data real do pagamento).
+  await Promise.all([
+    enriquecerComBaixas(empresa, parcelasRec),
+    enriquecerComBaixas(empresa, parcelasPag),
   ]);
 
   // Explode as baixas cuja data de pagamento cai no período [de, ate].

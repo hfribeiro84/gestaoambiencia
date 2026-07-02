@@ -171,11 +171,13 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 - **Extrato como base (0008), REGIME DE CAIXA:** o extrato materializado (`dre_extrato` +
   `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é consultado a cada
   cálculo. O usuário atualiza por período (modal início/fim na aba Extrato):
-  `POST /extrato/:empresa` busca no CA e monta o caixa real. Como a API v2 não filtra por
-  data de pagamento, `dreExtrato` busca as **parcelas com baixas** (`buscarParcelasComBaixas`
-  → `/v1/financeiro/contas-a-receber|contas-a-pagar`) numa janela de vencimento ampla
-  (−36/+12 meses), **explode as baixas** e filtra as que caíram no período pela `data_baixa`.
-  O saldo parte do saldo inicial do CA na data inicial e acumula por pagamento/recebimento.
+  `POST /extrato/:empresa` busca no CA e monta o caixa real. A lista `/buscar` NÃO traz as
+  baixas e não há filtro por data de pagamento; então `dreContaAzul.buscarParcelas` lista as
+  parcelas por vencimento (janela ampla −36/+12 meses) e `enriquecerComBaixas` busca, só nas
+  parcelas pagas, `/v1/financeiro/eventos-financeiros/parcelas/{id}/baixa` (campos
+  `data_pagamento` + `valor_composicao.valor_liquido`). `dreExtrato` **explode as baixas** e
+  filtra as que caíram no período pela `data_pagamento`. O saldo parte do saldo inicial do CA
+  na data inicial e acumula por pagamento/recebimento.
   Substitui o extrato salvo. Abas DRE e Extrato mostram período + atualização. Histórico removido.
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot

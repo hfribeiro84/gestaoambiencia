@@ -95,6 +95,7 @@ export interface ParcelaCA {
   valorTotal: number;
   dataVencimento: string;
   dataCompetencia: string;
+  dataAlteracao: string;  // data_alteracao (proxy da data em que a baixa foi registrada)
   totalBaixado: number;   // soma das baixas
   baixas: BaixaCA[];
 }

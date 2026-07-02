@@ -226,6 +226,7 @@ function mapearParcela(item: Record<string, unknown>, tipo: 'receita' | 'despesa
     valorTotal: Math.abs(extrairValor(item)),
     dataVencimento: extrairDataVencimento(item),
     dataCompetencia: extrairDataCompetencia(item),
+    dataAlteracao: String(item.data_alteracao ?? item.data_criacao ?? '').slice(0, 10),
     totalBaixado: Math.abs(Number(item.pago ?? 0)),
     baixas: [],
   };

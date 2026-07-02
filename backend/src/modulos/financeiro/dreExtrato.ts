@@ -121,8 +121,19 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
       buscarParcelas(empresa, 'receita', vDe, caixaAte),
       buscarParcelas(empresa, 'despesa', vDe, caixaAte),
     ]);
-    await Promise.all([enriquecerComBaixas(empresa, pr), enriquecerComBaixas(empresa, pp)]);
-    for (const p of [...pr, ...pp]) {
+
+    // Só busca a baixa das parcelas que PROVAVELMENTE foram pagas no período —
+    // evita centenas de chamadas inúteis. Proxy: data_alteracao (registro da baixa)
+    // ou vencimento dentro do período. Baixa real é filtrada por data depois.
+    const candidata = (p: (typeof pr)[number]) =>
+      p.totalBaixado > 0.005 &&
+      ((p.dataAlteracao >= de && p.dataAlteracao <= caixaAte) ||
+        (p.dataVencimento >= de && p.dataVencimento <= caixaAte));
+    const candRec = pr.filter(candidata);
+    const candPag = pp.filter(candidata);
+
+    await Promise.all([enriquecerComBaixas(empresa, candRec), enriquecerComBaixas(empresa, candPag)]);
+    for (const p of [...candRec, ...candPag]) {
       for (const b of p.baixas) {
         if (b.data >= de && b.data <= caixaAte && b.valor) {
           eventos.push({ id: p.id, data: b.data, tipo: p.tipo, descricao: p.descricao, categoria: p.categoria, valor: Math.abs(b.valor), previsto: false });

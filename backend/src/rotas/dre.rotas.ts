@@ -696,23 +696,43 @@ rotasDre.get('/financeiro/dre/debug/parcelas/:empresa/:mes/:ano', async (req: Re
     const de = primeiroDia(mes, ano);
     const ate = ultimoDia(mes, ano);
 
-    const r = await chamadaApi(conta, '/v1/financeiro/contas-a-receber', {
-      data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '5',
-    });
-    const texto = await r.text();
-    let corpo: unknown;
-    try { corpo = JSON.parse(texto); } catch { corpo = texto.slice(0, 300); }
+    // Sonda vários caminhos candidatos para descobrir qual devolve parcelas e
+    // onde estão as baixas (data de pagamento).
+    const candidatos = [
+      '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar',
+      '/v1/financeiro/contas-a-receber',
+      '/v1/financeiro/eventos-financeiros/contas-a-receber',
+    ];
 
-    const itens = (corpo as { itens?: Record<string, unknown>[] })?.itens ?? [];
-    const primeira = itens[0];
-    const baixas = (primeira?.baixas ?? primeira?.pagamentos) as unknown;
-    res.json({
-      status: r.status,
-      totalNoTrecho: itens.length,
-      chavesDaParcela: primeira ? Object.keys(primeira) : [],
-      chavesDaBaixa: Array.isArray(baixas) && baixas[0] ? Object.keys(baixas[0] as object) : [],
-      amostraParcela: primeira ?? null,
-    });
+    const resultados = [] as Record<string, unknown>[];
+    for (const endpoint of candidatos) {
+      try {
+        const r = await chamadaApi(conta, endpoint, {
+          data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '5',
+        });
+        const texto = await r.text();
+        let corpo: unknown;
+        try { corpo = JSON.parse(texto); } catch { corpo = texto.slice(0, 200); }
+        const itens = (corpo as { itens?: Record<string, unknown>[] })?.itens ?? [];
+        const p0 = itens[0];
+        // Procura qualquer chave que pareça baixa/pagamento no item.
+        const chaveBaixa = p0 ? Object.keys(p0).find((k) => /baix|pagament|recebiment|liquid/i.test(k)) : undefined;
+        const baixaArr = chaveBaixa ? (p0![chaveBaixa] as unknown) : undefined;
+        resultados.push({
+          endpoint,
+          status: r.status,
+          qtdItens: itens.length,
+          chavesDaParcela: p0 ? Object.keys(p0) : [],
+          chaveBaixaDetectada: chaveBaixa ?? null,
+          chavesDaBaixa: Array.isArray(baixaArr) && baixaArr[0] ? Object.keys(baixaArr[0] as object) : [],
+          amostraPrimeiroItem: p0 ?? null,
+        });
+      } catch (e) {
+        resultados.push({ endpoint, erro: (e as Error).message });
+      }
+    }
+
+    res.json({ empresa, mes, ano, de, ate, resultados });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

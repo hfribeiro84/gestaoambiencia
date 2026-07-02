@@ -678,6 +678,69 @@ rotasDre.get('/financeiro/dre/debug/amostra/:empresa/:mes/:ano', autenticar, asy
 });
 
 // ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/debug/extrato-diag/:empresa  (TEMPORÁRIO, público)
+// Diagnostica: (1) resposta crua do saldo inicial; (2) se o CA devolve parcelas
+// com vencimento futuro além de ~1 mês.
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/debug/extrato-diag/:empresa', async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    if (empresa !== 'ass' && empresa !== 'netr') {
+      res.status(400).json({ erro: 'Use ass ou netr.' });
+      return;
+    }
+    const conta = contaCA(empresa);
+    const hoje = new Date().toISOString().slice(0, 10);
+    const [y, m, d] = hoje.split('-').map(Number);
+    const mais18 = new Date(Date.UTC(y, m - 1 + 18, d)).toISOString().slice(0, 10);
+
+    // (1) Saldo inicial — sonda candidatos e mostra a resposta crua.
+    const saldoCand: Array<{ ep: string; params: Record<string, string> }> = [
+      { ep: '/v1/financeiro/eventos-financeiros/saldo-inicial', params: { data_inicio: hoje, data_fim: hoje } },
+      { ep: '/v1/financeiro/contas-financeiras', params: {} },
+      { ep: '/v1/financeiro/saldo', params: { data: hoje } },
+    ];
+    const saldos: Record<string, unknown>[] = [];
+    for (const c of saldoCand) {
+      try {
+        const r = await chamadaApi(conta, c.ep, c.params);
+        const t = await r.text();
+        let corpo: unknown;
+        try { corpo = JSON.parse(t); } catch { corpo = t.slice(0, 300); }
+        saldos.push({ ep: c.ep, status: r.status, corpo });
+      } catch (e) {
+        saldos.push({ ep: c.ep, erro: (e as Error).message });
+      }
+    }
+
+    // (2) Parcelas a pagar com vencimento de hoje até +18 meses.
+    let futuras: Record<string, unknown>;
+    try {
+      const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar', {
+        data_vencimento_de: hoje, data_vencimento_ate: mais18, pagina: '1', tamanho_pagina: '200',
+      });
+      const b = JSON.parse(await r.text()) as { itens?: Record<string, unknown>[]; itens_totais?: number };
+      const itens = b.itens ?? [];
+      const vencs = itens.map((i) => String(i.data_vencimento ?? '')).filter(Boolean).sort();
+      futuras = {
+        status: r.status,
+        itens_totais: b.itens_totais,
+        qtdRetornada: itens.length,
+        vencMin: vencs[0] ?? null,
+        vencMax: vencs[vencs.length - 1] ?? null,
+        amostra: itens.slice(0, 3).map((i) => ({ desc: i.descricao, venc: i.data_vencimento, status: i.status_traduzido, pago: i.pago, total: i.total })),
+      };
+    } catch (e) {
+      futuras = { erro: (e as Error).message };
+    }
+
+    res.json({ empresa, hoje, mais18, saldos, futuras });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
 // GET /financeiro/dre/debug/parcelas/:empresa/:mes/:ano
 // Inspeciona o schema cru de contas-a-receber (parcelas + baixas) para
 // confirmar os nomes dos campos de baixa/pagamento na API do CA.

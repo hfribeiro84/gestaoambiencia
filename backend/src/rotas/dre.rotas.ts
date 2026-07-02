@@ -681,8 +681,9 @@ rotasDre.get('/financeiro/dre/debug/amostra/:empresa/:mes/:ano', autenticar, asy
 // GET /financeiro/dre/debug/parcelas/:empresa/:mes/:ano
 // Inspeciona o schema cru de contas-a-receber (parcelas + baixas) para
 // confirmar os nomes dos campos de baixa/pagamento na API do CA.
+// TEMPORÁRIO: público (sem auth) só para diagnóstico — remover depois.
 // ──────────────────────────────────────────────────────────────
-rotasDre.get('/financeiro/dre/debug/parcelas/:empresa/:mes/:ano', autenticar, async (req: Request, res: Response) => {
+rotasDre.get('/financeiro/dre/debug/parcelas/:empresa/:mes/:ano', async (req: Request, res: Response) => {
   try {
     const { empresa } = req.params;
     const mes = parseInt(req.params.mes, 10);

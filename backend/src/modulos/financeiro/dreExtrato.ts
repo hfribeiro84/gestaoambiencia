@@ -53,6 +53,31 @@ function somaPorTipo(itens: ItemExtratoSalvo[], tipo: 'receita' | 'despesa'): nu
   return itens.filter((i) => i.tipo === tipo).reduce((s, i) => s + i.valor, 0);
 }
 
+const TAMANHO_PAGINA_DB = 1000;
+
+/**
+ * Executa uma query Supabase paginando com `.range()` até esgotar os resultados.
+ * O PostgREST limita a 1000 linhas por padrão — sem isso, extratos com muitos
+ * itens (ex.: ano inteiro com previsões granulares) perdiam os meses finais.
+ */
+async function selecionarTudoPaginado<T>(
+  montarQuery: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const todos: T[] = [];
+  let pagina = 0;
+  while (true) {
+    const de = pagina * TAMANHO_PAGINA_DB;
+    const ate = de + TAMANHO_PAGINA_DB - 1;
+    const { data, error } = await montarQuery(de, ate);
+    if (error) throw new Error(error.message);
+    const lote = data ?? [];
+    todos.push(...lote);
+    if (lote.length < TAMANHO_PAGINA_DB) break;
+    pagina++;
+  }
+  return todos;
+}
+
 // ──────────────────────────────────────────────────────────────
 // Contas em atraso (vencidas e ainda em aberto) — snapshot informativo
 // ──────────────────────────────────────────────────────────────
@@ -225,15 +250,17 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
     .maybeSingle();
   if (!meta) return null;
 
-  const { data: itensDb, error } = await supabaseAdmin
-    .from('dre_extrato_item')
-    .select('lancamento_id, data, tipo, descricao, categoria, valor, saldo, previsto')
-    .eq('empresa', empresa)
-    .order('data')
-    .order('ordem');
-  if (error) throw new Error(error.message);
+  const itensDb = await selecionarTudoPaginado<Record<string, unknown>>((de, ate) =>
+    supabaseAdmin
+      .from('dre_extrato_item')
+      .select('lancamento_id, data, tipo, descricao, categoria, valor, saldo, previsto')
+      .eq('empresa', empresa)
+      .order('data')
+      .order('ordem')
+      .range(de, ate),
+  );
 
-  const itens: ItemExtratoSalvo[] = (itensDb ?? []).map((r: Record<string, unknown>) => ({
+  const itens: ItemExtratoSalvo[] = itensDb.map((r: Record<string, unknown>) => ({
     id: (r.lancamento_id as string) ?? '',
     data: r.data as string,
     tipo: r.tipo as ItemExtratoSalvo['tipo'],
@@ -284,16 +311,19 @@ export async function lerMetaExtrato(empresa: ContaCA): Promise<MetaExtrato | nu
  * o motor de cálculo (o campo dataVencimento carrega a data do pagamento).
  */
 export async function lerLancamentosDoExtrato(empresa: ContaCA, de: string, ate: string): Promise<LancamentoCA[]> {
-  const { data, error } = await supabaseAdmin
-    .from('dre_extrato_item')
-    .select('lancamento_id, data, tipo, categoria, descricao, valor')
-    .eq('empresa', empresa)
-    .neq('tipo', 'transferencia')
-    .gte('data', de)
-    .lte('data', ate);
-  if (error) throw new Error(error.message);
+  const data = await selecionarTudoPaginado<Record<string, unknown>>((rangeDe, rangeAte) =>
+    supabaseAdmin
+      .from('dre_extrato_item')
+      .select('lancamento_id, data, tipo, categoria, descricao, valor')
+      .eq('empresa', empresa)
+      .neq('tipo', 'transferencia')
+      .gte('data', de)
+      .lte('data', ate)
+      .order('data')
+      .range(rangeDe, rangeAte),
+  );
 
-  return (data ?? []).map((r: Record<string, unknown>) => ({
+  return data.map((r: Record<string, unknown>) => ({
     id: (r.lancamento_id as string) ?? '',
     categoria: (r.categoria as string) ?? '',
     valor: Number(r.valor),

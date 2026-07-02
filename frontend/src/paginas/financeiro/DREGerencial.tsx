@@ -219,6 +219,7 @@ export function DREGerencial() {
   const [extratoSaldoInicial, setExtratoSaldoInicial] = useState('');
   const [modalExtrato, setModalExtrato] = useState(false);
   const [atualizandoExtrato, setAtualizandoExtrato] = useState(false);
+  const [processandoExtrato, setProcessandoExtrato] = useState(false);
   const [carregandoExtrato, setCarregandoExtrato] = useState(false);
   const [erroExtrato, setErroExtrato] = useState('');
 
@@ -322,15 +323,15 @@ export function DREGerencial() {
     if (aba === 'extrato') carregarExtratoSalvo();
   }, [aba, carregarExtratoSalvo]);
 
-  // Atualiza o extrato: busca o período no Conta Azul e salva no banco.
-  // `reprocessar` ignora o cache de baixas (refaz tudo do zero).
+  // Rebuild COMPLETO: roda em background no servidor (pode levar minutos).
+  // Dispara e acompanha o status até terminar. `reprocessar` ignora o cache.
   async function atualizarExtrato(reprocessar = false) {
     if (!extratoDe || !extratoAte) { setErroExtrato('Informe o período inicial e final.'); return; }
     setAtualizandoExtrato(true);
     setErroExtrato('');
     try {
       const saldoNum = parseFloat(extratoSaldoInicial.replace(',', '.'));
-      const ext = await api<ExtratoSalvo>(`/api/financeiro/dre/extrato/${empresaExtrato}`, {
+      await api(`/api/financeiro/dre/extrato/${empresaExtrato}`, {
         method: 'POST',
         body: JSON.stringify({
           de: extratoDe,
@@ -339,14 +340,44 @@ export function DREGerencial() {
           ...(Number.isNaN(saldoNum) ? {} : { saldoInicial: saldoNum }),
         }),
       });
-      setExtratoSalvo(ext);
-      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm, atrasados: ext.atrasados });
       setModalExtrato(false);
+      setProcessandoExtrato(true);
+      await aguardarProcessamento();
     } catch (e) {
       setErroExtrato((e as Error).message);
-    } finally {
       setAtualizandoExtrato(false);
     }
+  }
+
+  // Consulta o status do rebuild até terminar (ou dar erro / estourar o tempo).
+  async function aguardarProcessamento() {
+    const emp = empresa === 'consolidado' ? 'ass' : empresa;
+    const inicio = Date.now();
+    const MAX_MS = 25 * 60 * 1000; // 25 min
+    while (Date.now() - inicio < MAX_MS) {
+      await new Promise((r) => setTimeout(r, 6000));
+      try {
+        const s = await api<{ estado: string; mensagem?: string }>(`/api/financeiro/dre/extrato/${emp}/status`);
+        if (s.estado === 'ok') {
+          await carregarExtratoSalvo();
+          await carregarExtratoMeta();
+          setProcessandoExtrato(false);
+          setAtualizandoExtrato(false);
+          return;
+        }
+        if (s.estado === 'erro') {
+          setErroExtrato('Falha no processamento: ' + (s.mensagem ?? 'erro desconhecido'));
+          setProcessandoExtrato(false);
+          setAtualizandoExtrato(false);
+          return;
+        }
+      } catch {
+        /* segue tentando — falha de rede pontual não interrompe */
+      }
+    }
+    setErroExtrato('O processamento está demorando mais que o normal. Ele continua rodando no servidor — recarregue a página em alguns minutos para ver o resultado.');
+    setProcessandoExtrato(false);
+    setAtualizandoExtrato(false);
   }
 
   function reprocessarExtrato() {
@@ -619,6 +650,7 @@ export function DREGerencial() {
           saldoInicial={extratoSaldoInicial}
           setSaldoInicial={setExtratoSaldoInicial}
           atualizando={atualizandoExtrato}
+          processando={processandoExtrato}
           onAbrirModal={() => setModalExtrato(true)}
           onFecharModal={() => setModalExtrato(false)}
           onAtualizar={() => atualizarExtrato(false)}
@@ -1296,6 +1328,7 @@ interface AbaExtratoProps {
   setDe: (v: string) => void; setAte: (v: string) => void;
   saldoInicial: string; setSaldoInicial: (v: string) => void;
   atualizando: boolean;
+  processando: boolean;
   onAbrirModal: () => void;
   onFecharModal: () => void;
   onAtualizar: () => void;
@@ -1305,7 +1338,7 @@ interface AbaExtratoProps {
 
 function AbaExtrato({
   empresa, extrato, meta, carregando, erro, modalAberto,
-  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar, onAtualizarRecente, onReprocessar,
+  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, processando, onAbrirModal, onFecharModal, onAtualizar, onAtualizarRecente, onReprocessar,
 }: AbaExtratoProps) {
   return (
     <div>
@@ -1359,6 +1392,13 @@ function AbaExtrato({
           )}
         </div>
       </div>
+
+      {processando && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800 flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+          Processando o período completo no Conta Azul — pode levar alguns minutos. Pode aguardar aqui; se fechar, o processamento continua no servidor.
+        </div>
+      )}
 
       <PainelAtrasados atrasados={meta?.atrasados} />
 

@@ -146,7 +146,8 @@ RLS habilitado em todas. `integracao_config` sem policy de usuário comum (prote
 | GET  | `/ultimo/:empresa` | Último snapshot calculado. |
 | GET  | `/snapshots/:empresa` | Lista snapshots (id, mes_ref, ano_ref, calculado_em). |
 | DELETE | `/snapshots/:empresa/:id` | Exclui snapshot. |
-| POST | `/extrato/:empresa` | Busca período no CA (body `de`,`ate`,`saldoInicial`,`reprocessar`), calcula saldo e **substitui** o extrato salvo (completo). |
+| POST | `/extrato/:empresa` | Rebuild COMPLETO em **background** (body `de`,`ate`,`saldoInicial`,`reprocessar`); responde 202. |
+| GET  | `/extrato/:empresa/status` | Status do rebuild em background (processando/ok/erro/ocioso). |
 | POST | `/extrato/:empresa/recente` | Atualização incremental (últimos 2 meses + futuro), mantendo o histórico. |
 | GET  | `/extrato/:empresa` | Extrato salvo (metadados + itens com saldo). |
 | GET  | `/extrato-meta/:empresa` | Período disponível + data de atualização + resumo de atrasados. |
@@ -194,6 +195,10 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
   futuro, continuando o saldo a partir do último item congelado (`POST /extrato/:empresa/recente`;
   botão "Atualizar recente"). O cron das **04:00** (`atualizarExtratosDiario`) usa o incremental —
   rápido mesmo com histórico grande, rola a fronteira caixa/previsto e traz novos pagamentos.
+- **Rebuild completo assíncrono:** o `POST /extrato/:empresa` (completo) pode levar minutos e
+  estourava o timeout da borda (erro "Failed to fetch"). Agora roda em **background** (mapa
+  `jobsExtrato` em memória): responde 202 e o frontend consulta `/extrato/:empresa/status`
+  (processando/ok/erro) até terminar. O incremental e o cron continuam síncronos (rápidos).
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
   salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato

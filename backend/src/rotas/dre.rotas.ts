@@ -15,6 +15,11 @@ const FORMULAS_VALIDAS = new Set(['receita_liquida', 'resultado_operacional', 'r
 
 export const rotasDre = Router();
 
+// Estado dos processamentos pesados do extrato (rebuild completo), por empresa.
+// Em memória: o rebuild roda em background e o frontend consulta o status.
+type JobExtrato = { estado: 'processando' | 'ok' | 'erro'; mensagem?: string; inicio: string; fim?: string };
+const jobsExtrato = new Map<string, JobExtrato>();
+
 function empresaValida(e: string): e is EmpresaDRE {
   return e === 'ass' || e === 'netr' || e === 'consolidado';
 }
@@ -321,34 +326,47 @@ rotasDre.delete('/financeiro/dre/snapshots/:empresa/:id', autenticar, async (req
 });
 
 // ──────────────────────────────────────────────────────────────
-// POST /financeiro/dre/extrato/:empresa  (body: { de, ate })
-// Busca o período completo no Conta Azul, calcula o saldo corrente e SALVA no
-// banco (substituindo). Essa tabela vira a base de dados da DRE.
+// POST /financeiro/dre/extrato/:empresa  (body: { de, ate, saldoInicial, reprocessar })
+// Rebuild COMPLETO do período. Como pode levar minutos (muitas baixas), roda em
+// BACKGROUND: responde 202 na hora e o frontend consulta /status até terminar.
 // ──────────────────────────────────────────────────────────────
 rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
-  try {
-    const { empresa } = req.params;
-    const { de, ate, saldoInicial, reprocessar } = req.body as { de?: string; ate?: string; saldoInicial?: number; reprocessar?: boolean };
+  const { empresa } = req.params;
+  const { de, ate, saldoInicial, reprocessar } = req.body as { de?: string; ate?: string; saldoInicial?: number; reprocessar?: boolean };
 
-    if (empresa !== 'ass' && empresa !== 'netr') {
-      res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
-      return;
-    }
-    if (!de || !ate) {
-      res.status(400).json({ erro: 'Informe as datas de início (de) e fim (ate).' });
-      return;
-    }
-    if (de > ate) {
-      res.status(400).json({ erro: 'A data inicial não pode ser maior que a final.' });
-      return;
-    }
-
-    const saldo = typeof saldoInicial === 'number' ? saldoInicial : undefined;
-    const extrato = await gerarESalvarExtrato(empresa, de, ate, saldo, { ignorarCache: reprocessar === true });
-    res.json(extrato);
-  } catch (e) {
-    res.status(500).json({ erro: (e as Error).message });
+  if (empresa !== 'ass' && empresa !== 'netr') {
+    res.status(400).json({ erro: 'Use ass ou netr para o extrato.' }); return;
   }
+  if (!de || !ate) {
+    res.status(400).json({ erro: 'Informe as datas de início (de) e fim (ate).' }); return;
+  }
+  if (de > ate) {
+    res.status(400).json({ erro: 'A data inicial não pode ser maior que a final.' }); return;
+  }
+  if (jobsExtrato.get(empresa)?.estado === 'processando') {
+    res.status(409).json({ erro: 'Já há um processamento em andamento para esta empresa. Aguarde terminar.' }); return;
+  }
+
+  const saldo = typeof saldoInicial === 'number' ? saldoInicial : undefined;
+  const inicio = new Date().toISOString();
+  jobsExtrato.set(empresa, { estado: 'processando', inicio });
+  res.status(202).json({ processando: true });
+
+  // Processa em background (o cliente acompanha por /status).
+  gerarESalvarExtrato(empresa, de, ate, saldo, { ignorarCache: reprocessar === true })
+    .then(() => jobsExtrato.set(empresa, { estado: 'ok', inicio, fim: new Date().toISOString() }))
+    .catch((e) => {
+      console.error(`[extrato ${empresa}] erro no rebuild:`, (e as Error).message);
+      jobsExtrato.set(empresa, { estado: 'erro', mensagem: (e as Error).message, inicio, fim: new Date().toISOString() });
+    });
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/extrato/:empresa/status  — status do rebuild em background
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/extrato/:empresa/status', autenticar, (req: Request, res: Response) => {
+  const { empresa } = req.params;
+  res.json(jobsExtrato.get(empresa) ?? { estado: 'ocioso' });
 });
 
 // ──────────────────────────────────────────────────────────────

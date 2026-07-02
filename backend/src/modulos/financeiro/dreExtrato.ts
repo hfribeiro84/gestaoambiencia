@@ -24,16 +24,20 @@ import type {
 
 type ContaCA = 'ass' | 'netr';
 
-// Margens da janela de vencimento para captar baixas fora do período (pagamentos
-// atrasados ou adiantados). Amplas de propósito — o extrato é atualização manual.
-const MARGEM_ATRASO_MESES = 36;
-const MARGEM_ADIANTAMENTO_MESES = 12;
-// Quão longe olhar para trás ao levantar contas vencidas em aberto.
-const MARGEM_ATRASADOS_MESES = 36;
+// Ao buscar baixas realizadas, olhamos parcelas vencidas até N meses antes do
+// início do período (pagamentos costumam ocorrer perto do vencimento).
+const MARGEM_CAIXA_MESES = 6;
+// Quão longe olhar para trás ao levantar contas vencidas em aberto (atrasados).
+const MARGEM_ATRASADOS_MESES = 12;
 
 function addMeses(iso: string, n: number): string {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
   return new Date(Date.UTC(y, m - 1 + n, d)).toISOString().slice(0, 10);
+}
+
+function addDias(iso: string, n: number): string {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
 function hojeISO(): string {
@@ -96,49 +100,64 @@ export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResu
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Busca o período no CA (regime de caixa), calcula o saldo corrente e SALVA no
- * banco, substituindo o extrato anterior. Também grava o snapshot de atrasados.
+ * Modelo HÍBRIDO: até ontem = CAIXA (baixas reais, por data de pagamento);
+ * de hoje em diante = PREVISTO (parcelas em aberto, pela data de vencimento).
+ * Calcula o saldo corrente (realizado + projeção) e SALVA no banco, substituindo
+ * o extrato anterior. Também grava o snapshot de atrasados.
  */
 export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string): Promise<ExtratoSalvo> {
-  const vencDe = addMeses(de, -MARGEM_ATRASO_MESES);
-  const vencAte = addMeses(ate, MARGEM_ADIANTAMENTO_MESES);
+  const hoje = hojeISO();
+  const ontem = addDias(hoje, -1);
+  const caixaAte = ate < ontem ? ate : ontem; // realizado vai até ontem (ou fim, se antes)
+  const prevDe = de > hoje ? de : hoje;        // previsto começa hoje (ou início, se depois)
 
-  const [saldoInicial, parcelasRec, parcelasPag, atrasados] = await Promise.all([
-    buscarSaldoInicial(empresa, de),
-    buscarParcelas(empresa, 'receita', vencDe, vencAte),
-    buscarParcelas(empresa, 'despesa', vencDe, vencAte),
-    calcularAtrasados(empresa),
-  ]);
+  type Evento = { id: string; data: string; tipo: 'receita' | 'despesa'; descricao: string; categoria: string; valor: number; previsto: boolean };
+  const eventos: Evento[] = [];
 
-  // Enriquece as parcelas pagas com suas baixas (data real do pagamento).
-  await Promise.all([
-    enriquecerComBaixas(empresa, parcelasRec),
-    enriquecerComBaixas(empresa, parcelasPag),
-  ]);
-
-  // Explode as baixas cuja data de pagamento cai no período [de, ate].
-  const eventos = [] as Array<{ id: string; data: string; tipo: 'receita' | 'despesa'; descricao: string; categoria: string; valor: number }>;
-  for (const p of [...parcelasRec, ...parcelasPag]) {
-    for (const b of p.baixas) {
-      if (b.data >= de && b.data <= ate && b.valor) {
-        eventos.push({
-          id: p.id,
-          data: b.data,
-          tipo: p.tipo,
-          descricao: p.descricao,
-          categoria: p.categoria,
-          valor: Math.abs(b.valor),
-        });
+  // ── REALIZADO (caixa): baixas com data_pagamento em [de, caixaAte] ──
+  if (de <= caixaAte) {
+    const vDe = addMeses(de, -MARGEM_CAIXA_MESES);
+    const [pr, pp] = await Promise.all([
+      buscarParcelas(empresa, 'receita', vDe, caixaAte),
+      buscarParcelas(empresa, 'despesa', vDe, caixaAte),
+    ]);
+    await Promise.all([enriquecerComBaixas(empresa, pr), enriquecerComBaixas(empresa, pp)]);
+    for (const p of [...pr, ...pp]) {
+      for (const b of p.baixas) {
+        if (b.data >= de && b.data <= caixaAte && b.valor) {
+          eventos.push({ id: p.id, data: b.data, tipo: p.tipo, descricao: p.descricao, categoria: p.categoria, valor: Math.abs(b.valor), previsto: false });
+        }
       }
     }
   }
+
+  // ── PREVISTO (competência): parcelas em aberto com vencimento em [prevDe, ate] ──
+  if (ate >= prevDe) {
+    const [pr, pp] = await Promise.all([
+      buscarParcelas(empresa, 'receita', prevDe, ate),
+      buscarParcelas(empresa, 'despesa', prevDe, ate),
+    ]);
+    for (const p of [...pr, ...pp]) {
+      const aberto = p.valorTotal - p.totalBaixado;
+      if (aberto > 0.005 && p.dataVencimento >= prevDe && p.dataVencimento <= ate) {
+        eventos.push({ id: p.id, data: p.dataVencimento, tipo: p.tipo, descricao: p.descricao, categoria: p.categoria, valor: aberto, previsto: true });
+      }
+    }
+  }
+
+  const [saldoInicial, atrasados] = await Promise.all([
+    buscarSaldoInicial(empresa, de),
+    calcularAtrasados(empresa),
+  ]);
+
   eventos.sort((a, b) => a.data.localeCompare(b.data));
 
-  // Saldo corrente: parte do saldo inicial do CA; recebimentos somam, pagamentos subtraem.
+  // Saldo corrente: parte do saldo inicial; recebimentos somam, pagamentos subtraem
+  // (realizado no passado, projeção no futuro).
   let saldo = saldoInicial;
   const itens: ItemExtratoSalvo[] = eventos.map((it) => {
     saldo += it.tipo === 'receita' ? it.valor : -it.valor;
-    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo };
+    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo, previsto: it.previsto };
   });
 
   const totalReceitas = somaPorTipo(itens, 'receita');
@@ -163,6 +182,7 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
     valor: i.valor,
     saldo: i.saldo,
     ordem: idx,
+    previsto: i.previsto ?? false,
   }));
   for (let k = 0; k < rows.length; k += 500) {
     const { error } = await supabaseAdmin.from('dre_extrato_item').insert(rows.slice(k, k + 500));
@@ -194,7 +214,7 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
 
   const { data: itensDb, error } = await supabaseAdmin
     .from('dre_extrato_item')
-    .select('lancamento_id, data, tipo, descricao, categoria, valor, saldo')
+    .select('lancamento_id, data, tipo, descricao, categoria, valor, saldo, previsto')
     .eq('empresa', empresa)
     .order('data')
     .order('ordem');
@@ -208,6 +228,7 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
     categoria: (r.categoria as string) ?? '',
     valor: Number(r.valor),
     saldo: Number(r.saldo),
+    previsto: Boolean(r.previsto),
   }));
 
   const saldoInicial = Number(meta.saldo_inicial);

@@ -97,6 +97,7 @@ interface ItemExtrato {
   categoria: string;
   valor: number;
   saldo?: number;
+  previsto?: boolean;
 }
 
 interface ItemAtraso {
@@ -502,7 +503,7 @@ export function DREGerencial() {
     <div>
       <h1 className="text-2xl font-semibold mb-1">DRE Gerencial</h1>
       <p className="text-gray-500 text-sm mb-5">
-        Demonstrativo de Resultado do Exercício — caixa, 12 meses.
+        Demonstrativo de Resultado do Exercício — caixa (até ontem) + previsto (a partir de hoje).
       </p>
 
       {/* Seletor de empresa */}
@@ -1315,6 +1316,11 @@ function AbaExtrato({
             <div className="text-xl font-bold text-blue-800">{formatBRL(extrato.saldoInicial)}</div>
           </div>
 
+          <div className="text-xs text-gray-500">
+            <strong>Até ontem:</strong> caixa realizado (data do pagamento). <strong className="text-blue-700">A partir de hoje:</strong>{' '}
+            <span className="text-blue-700">previsto</span> pela data de vencimento das contas em aberto (linhas em azul). O saldo projeta o futuro.
+          </div>
+
           {extrato.itens.length > 0 ? (
             <TabelaExtrato itens={extrato.itens} />
           ) : (
@@ -1392,23 +1398,25 @@ function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
             {itens.map((item, idx) => {
               const ehReceita = item.tipo === 'receita';
               const ehDespesa = item.tipo === 'despesa';
+              const prev = item.previsto;
               return (
-                <tr key={item.id || idx} className="hover:bg-gray-50">
+                <tr key={item.id || idx} className={prev ? 'bg-blue-50/40 hover:bg-blue-50 italic' : 'hover:bg-gray-50'}>
                   <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
                     {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
                   </td>
-                  <td className="px-4 py-2 text-gray-800">
+                  <td className={`px-4 py-2 ${prev ? 'text-gray-500' : 'text-gray-800'}`}>
                     {item.descricao || '(sem descrição)'}
                     {item.tipo === 'transferencia' && <span className="ml-1 text-xs text-gray-400">(transferência)</span>}
+                    {prev && <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 bg-blue-100 rounded px-1 py-0.5 not-italic">previsto</span>}
                   </td>
                   <td className="px-4 py-2 text-gray-500">{item.categoria}</td>
-                  <td className="px-4 py-2 text-right text-green-700 font-medium">
+                  <td className={`px-4 py-2 text-right font-medium ${prev ? 'text-green-600/70' : 'text-green-700'}`}>
                     {ehReceita ? formatBRL(Math.abs(item.valor)) : ''}
                   </td>
-                  <td className="px-4 py-2 text-right text-red-600 font-medium">
+                  <td className={`px-4 py-2 text-right font-medium ${prev ? 'text-red-500/70' : 'text-red-600'}`}>
                     {ehDespesa ? formatBRL(Math.abs(item.valor)) : ''}
                   </td>
-                  <td className="px-4 py-2 text-right text-gray-700 whitespace-nowrap">
+                  <td className={`px-4 py-2 text-right whitespace-nowrap ${prev ? 'text-gray-500' : 'text-gray-700'}`}>
                     {item.saldo !== undefined ? formatBRL(item.saldo) : ''}
                   </td>
                 </tr>

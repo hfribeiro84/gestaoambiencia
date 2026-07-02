@@ -159,6 +159,8 @@ export interface DadosExtrato {
 /** Item do extrato salvo, com o saldo corrente (acumulado) após o lançamento. */
 export interface ItemExtratoSalvo extends ItemExtrato {
   saldo: number;
+  /** true = previsto (competência/vencimento, futuro); false = realizado (caixa). */
+  previsto?: boolean;
 }
 
 /** Extrato materializado no banco — base de dados da DRE (regime de caixa). */

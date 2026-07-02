@@ -100,6 +100,7 @@ supabase/migrations/
   0007_dre_subtotais.sql         # tabela dre_subtotal (subtotais configuráveis)
   0008_dre_extrato.sql           # tabelas dre_extrato + dre_extrato_item (base da DRE)
   0009_dre_extrato_atrasados.sql # coluna dre_extrato.atrasados (jsonb) — snapshot de vencidos
+  0010_dre_extrato_previsto.sql  # coluna dre_extrato_item.previsto (bool) — caixa x previsto
 ```
 
 ## Banco — tabelas
@@ -168,24 +169,25 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 
 ## Módulo DRE — arquitetura
 
-- **Extrato como base (0008), REGIME DE CAIXA:** o extrato materializado (`dre_extrato` +
-  `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é consultado a cada
-  cálculo. O usuário atualiza por período (modal início/fim na aba Extrato):
-  `POST /extrato/:empresa` busca no CA e monta o caixa real. A lista `/buscar` NÃO traz as
-  baixas e não há filtro por data de pagamento; então `dreContaAzul.buscarParcelas` lista as
-  parcelas por vencimento (janela ampla −36/+12 meses) e `enriquecerComBaixas` busca, só nas
-  parcelas pagas, `/v1/financeiro/eventos-financeiros/parcelas/{id}/baixa` (campos
-  `data_pagamento` + `valor_composicao.valor_liquido`). `dreExtrato` **explode as baixas** e
-  filtra as que caíram no período pela `data_pagamento`. O saldo parte do saldo inicial do CA
-  na data inicial e acumula por pagamento/recebimento.
+- **Extrato como base (0008), MODELO HÍBRIDO caixa/competência:** o extrato materializado
+  (`dre_extrato` + `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é
+  consultado a cada cálculo. Regra: **até ontem = caixa** (baixas reais, por `data_pagamento`);
+  **de hoje em diante = previsto** (parcelas em aberto, pela `data_vencimento`; itens marcados
+  `previsto=true`). Assim a mesma tela mostra realizado (passado) + previsão (futuro), e o saldo
+  projeta o futuro. O usuário atualiza por período (modal início/fim). A lista `/buscar` NÃO traz
+  baixas; `dreContaAzul.buscarParcelas` lista por vencimento e `enriquecerComBaixas` busca as
+  baixas só das parcelas pagas em `/v1/financeiro/eventos-financeiros/parcelas/{id}/baixa`
+  (`data_pagamento` + `valor_composicao.valor_liquido`). Chamadas ao CA passam por throttle
+  (~8/s) + backoff em 429 (`fetchCA` em `contaAzul.ts`), respeitando o limite de 600/min.
   Substitui o extrato salvo. Abas DRE e Extrato mostram período + atualização. Histórico removido.
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
   salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato
   (informativo, **fora** do saldo de caixa).
-- **Cálculo:** regime de caixa — cada baixa entra no mês do **pagamento/recebimento**.
-  `calcularDRE()` lê do **extrato salvo** (`lerLancamentosDoExtrato`; o campo `dataVencimento`
-  carrega a data do pagamento), acumula por categoria via `dre_mapeamento`, soma subcategorias,
+- **Cálculo:** híbrido — realizado entra no mês do **pagamento** e previsto no mês do
+  **vencimento**. `calcularDRE()` lê do **extrato salvo** (`lerLancamentosDoExtrato`; o campo
+  `dataVencimento` carrega a data do item — pagamento ou vencimento), acumula por categoria via
+  `dre_mapeamento`, soma subcategorias,
   calcula totais (receitaLiquida, resultadoOperacional, resultadoLiquido, fluxoCaixaLivre) e
   salva snapshot em `dre_snapshot`. A DRE fica estática (carrega o último snapshot ao entrar)
   até o usuário clicar "Atualizar".

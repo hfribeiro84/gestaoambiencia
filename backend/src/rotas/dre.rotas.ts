@@ -676,3 +676,43 @@ rotasDre.get('/financeiro/dre/debug/amostra/:empresa/:mes/:ano', autenticar, asy
     res.status(500).json({ erro: (e as Error).message });
   }
 });
+
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/debug/parcelas/:empresa/:mes/:ano
+// Inspeciona o schema cru de contas-a-receber (parcelas + baixas) para
+// confirmar os nomes dos campos de baixa/pagamento na API do CA.
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/debug/parcelas/:empresa/:mes/:ano', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    const mes = parseInt(req.params.mes, 10);
+    const ano = parseInt(req.params.ano, 10);
+    if (!empresaValida(empresa) || empresa === 'consolidado') {
+      res.status(400).json({ erro: 'Use ass ou netr.' });
+      return;
+    }
+    const conta = contaCA(empresa);
+    const de = primeiroDia(mes, ano);
+    const ate = ultimoDia(mes, ano);
+
+    const r = await chamadaApi(conta, '/v1/financeiro/contas-a-receber', {
+      data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '5',
+    });
+    const texto = await r.text();
+    let corpo: unknown;
+    try { corpo = JSON.parse(texto); } catch { corpo = texto.slice(0, 300); }
+
+    const itens = (corpo as { itens?: Record<string, unknown>[] })?.itens ?? [];
+    const primeira = itens[0];
+    const baixas = (primeira?.baixas ?? primeira?.pagamentos) as unknown;
+    res.json({
+      status: r.status,
+      totalNoTrecho: itens.length,
+      chavesDaParcela: primeira ? Object.keys(primeira) : [],
+      chavesDaBaixa: Array.isArray(baixas) && baixas[0] ? Object.keys(baixas[0] as object) : [],
+      amostraParcela: primeira ?? null,
+    });
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});

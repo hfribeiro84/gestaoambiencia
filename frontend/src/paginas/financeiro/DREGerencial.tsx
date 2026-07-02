@@ -99,6 +99,22 @@ interface ItemExtrato {
   saldo?: number;
 }
 
+interface ItemAtraso {
+  id: string;
+  descricao: string;
+  categoria: string;
+  dataVencimento: string;
+  valorAberto: number;
+  diasAtraso: number;
+}
+
+interface AtrasadosResumo {
+  aReceber: ItemAtraso[];
+  aPagar: ItemAtraso[];
+  totalReceber: number;
+  totalPagar: number;
+}
+
 interface ExtratoSalvo {
   empresa: string;
   periodoDe: string;
@@ -109,12 +125,14 @@ interface ExtratoSalvo {
   totalReceitas: number;
   totalDespesas: number;
   saldoFinal: number;
+  atrasados?: AtrasadosResumo | null;
 }
 
 interface MetaExtrato {
   periodoDe: string;
   periodoAte: string;
   atualizadoEm: string;
+  atrasados?: AtrasadosResumo | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -683,6 +701,8 @@ function AbaDRE({
         )}
       </div>
 
+      <PainelAtrasados atrasados={extratoMeta?.atrasados} />
+
       {mappingsAlterados && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800 flex items-center justify-between gap-3">
           <span>Mapeamentos alterados — clique em <strong>Atualizar</strong> para recalcular o DRE com os novos valores.</span>
@@ -1167,6 +1187,69 @@ function LinhaDestaque({ nome, valores, meses, receitaBrutaTotal12, estilo }: {
   );
 }
 
+// ─── Painel de contas em atraso (informativo, fora do caixa) ──────────────────
+
+function PainelAtrasados({ atrasados }: { atrasados: AtrasadosResumo | null | undefined }) {
+  const [aberto, setAberto] = useState<'nenhum' | 'receber' | 'pagar'>('nenhum');
+  if (!atrasados) return null;
+  const { totalReceber, totalPagar, aReceber, aPagar } = atrasados;
+  if (totalReceber === 0 && totalPagar === 0) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={() => setAberto(aberto === 'receber' ? 'nenhum' : 'receber')}
+          className={`text-left rounded-lg border p-3 transition-colors ${aberto === 'receber' ? 'border-amber-400 bg-amber-100' : 'border-amber-200 bg-amber-50 hover:bg-amber-100'}`}
+        >
+          <div className="text-xs text-amber-700">A receber em atraso ({aReceber.length})</div>
+          <div className="text-lg font-bold text-amber-800">{formatBRL(totalReceber)}</div>
+        </button>
+        <button
+          onClick={() => setAberto(aberto === 'pagar' ? 'nenhum' : 'pagar')}
+          className={`text-left rounded-lg border p-3 transition-colors ${aberto === 'pagar' ? 'border-red-400 bg-red-100' : 'border-red-200 bg-red-50 hover:bg-red-100'}`}
+        >
+          <div className="text-xs text-red-700">A pagar em atraso ({aPagar.length})</div>
+          <div className="text-lg font-bold text-red-800">{formatBRL(totalPagar)}</div>
+        </button>
+      </div>
+      {aberto !== 'nenhum' && <TabelaAtrasados itens={aberto === 'receber' ? aReceber : aPagar} />}
+    </div>
+  );
+}
+
+function TabelaAtrasados({ itens }: { itens: ItemAtraso[] }) {
+  if (itens.length === 0) return <div className="mt-2 text-sm text-gray-400 text-center py-4 bg-white rounded-lg shadow">Nada em atraso.</div>;
+  return (
+    <div className="mt-2 bg-white rounded-lg shadow overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+            <tr>
+              <th className="px-4 py-2 text-left">Descrição</th>
+              <th className="px-4 py-2 text-left">Categoria</th>
+              <th className="px-4 py-2 text-left w-24">Vencimento</th>
+              <th className="px-4 py-2 text-right w-20">Atraso</th>
+              <th className="px-4 py-2 text-right w-32">Em aberto</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {itens.map((it, idx) => (
+              <tr key={it.id || idx} className="hover:bg-gray-50">
+                <td className="px-4 py-2 text-gray-800">{it.descricao || '(sem descrição)'}</td>
+                <td className="px-4 py-2 text-gray-500">{it.categoria}</td>
+                <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{formatData(it.dataVencimento)}</td>
+                <td className="px-4 py-2 text-right text-gray-500 whitespace-nowrap">{it.diasAtraso}d</td>
+                <td className="px-4 py-2 text-right font-medium text-gray-800 whitespace-nowrap">{formatBRL(it.valorAberto)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Aba Extrato ──────────────────────────────────────────────────────────────
 
 interface AbaExtratoProps {
@@ -1212,6 +1295,8 @@ function AbaExtrato({
           Atualizar extrato
         </button>
       </div>
+
+      <PainelAtrasados atrasados={meta?.atrasados} />
 
       {erro && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{erro}</div>}
 

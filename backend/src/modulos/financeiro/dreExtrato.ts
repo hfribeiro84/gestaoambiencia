@@ -1,54 +1,138 @@
 /**
- * Extrato materializado no banco — base de dados da DRE Gerencial.
+ * Extrato materializado no banco — base de dados da DRE Gerencial (REGIME DE CAIXA).
  *
- * Em vez de consultar o Conta Azul a cada cálculo, o usuário atualiza o extrato
- * por período (manualmente). Este módulo busca os dados do CA, calcula o saldo
- * corrente linha a linha e grava nas tabelas `dre_extrato` (metadados) e
- * `dre_extrato_item` (lançamentos). A DRE passa a ler daqui.
+ * O usuário atualiza o extrato por período (manualmente). Como a API v2 do Conta
+ * Azul não filtra por data de pagamento, buscamos as parcelas por uma janela de
+ * vencimento ampla, explodimos as BAIXAS (pagamentos/recebimentos efetivos) e
+ * filtramos pelas que caíram no período — assim o extrato reflete o caixa real.
+ * A DRE lê desses lançamentos (já datados pelo pagamento).
+ *
+ * Também calcula um snapshot de contas EM ATRASO (vencidas e em aberto), guardado
+ * junto do extrato — informativo, não entra no saldo de caixa.
  */
 import { supabaseAdmin } from '../../config/supabase';
-import { buscarSaldoInicial, buscarTransferencias, buscarLancamentosExtrato } from './dreContaAzul';
-import type { LancamentoCA, ItemExtratoSalvo, ExtratoSalvo, MetaExtrato } from './dreTypes';
+import { buscarSaldoInicial, buscarParcelasComBaixas } from './dreContaAzul';
+import type {
+  LancamentoCA,
+  ItemExtratoSalvo,
+  ExtratoSalvo,
+  MetaExtrato,
+  ParcelaCA,
+  ItemAtraso,
+  AtrasadosResumo,
+} from './dreTypes';
 
 type ContaCA = 'ass' | 'netr';
+
+// Margens da janela de vencimento para captar baixas fora do período (pagamentos
+// atrasados ou adiantados). Amplas de propósito — o extrato é atualização manual.
+const MARGEM_ATRASO_MESES = 36;
+const MARGEM_ADIANTAMENTO_MESES = 12;
+// Quão longe olhar para trás ao levantar contas vencidas em aberto.
+const MARGEM_ATRASADOS_MESES = 36;
+
+function addMeses(iso: string, n: number): string {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, d)).toISOString().slice(0, 10);
+}
+
+function hojeISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function diasEntre(deIso: string, ateIso: string): number {
+  const ms = Date.parse(ateIso) - Date.parse(deIso);
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
 
 function somaPorTipo(itens: ItemExtratoSalvo[], tipo: 'receita' | 'despesa'): number {
   return itens.filter((i) => i.tipo === tipo).reduce((s, i) => s + i.valor, 0);
 }
 
-/**
- * Busca o extrato do CA no período, calcula o saldo corrente e SALVA no banco,
- * substituindo o extrato anterior daquela empresa.
- */
-export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string): Promise<ExtratoSalvo> {
-  const [saldoInicial, transferencias, lancamentos] = await Promise.all([
-    buscarSaldoInicial(empresa, de),
-    buscarTransferencias(empresa, de, ate),
-    buscarLancamentosExtrato(empresa, de, ate),
+// ──────────────────────────────────────────────────────────────
+// Contas em atraso (vencidas e ainda em aberto) — snapshot informativo
+// ──────────────────────────────────────────────────────────────
+
+function atrasadosDeParcelas(parcelas: ParcelaCA[], hoje: string): ItemAtraso[] {
+  const out: ItemAtraso[] = [];
+  for (const p of parcelas) {
+    const aberto = p.valorTotal - p.totalBaixado;
+    if (aberto <= 0.005) continue;           // já quitada (ou quase)
+    if (!p.dataVencimento || p.dataVencimento >= hoje) continue; // não vencida
+    out.push({
+      id: p.id,
+      descricao: p.descricao,
+      categoria: p.categoria,
+      dataVencimento: p.dataVencimento,
+      valorAberto: aberto,
+      diasAtraso: diasEntre(p.dataVencimento, hoje),
+    });
+  }
+  return out.sort((a, b) => b.diasAtraso - a.diasAtraso);
+}
+
+/** Levanta as contas a receber e a pagar vencidas e em aberto (regime informativo). */
+export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResumo> {
+  const hoje = hojeISO();
+  const de = addMeses(hoje, -MARGEM_ATRASADOS_MESES);
+
+  const [rec, pag] = await Promise.all([
+    buscarParcelasComBaixas(empresa, 'receita', de, hoje),
+    buscarParcelasComBaixas(empresa, 'despesa', de, hoje),
   ]);
 
-  // Junta lançamentos (por vencimento — API v2 não traz data de pagamento) e
-  // transferências, ordenados por data.
-  const base = [
-    ...lancamentos.map((l) => ({
-      id: l.id,
-      data: l.dataVencimento,
-      tipo: l.tipo as 'receita' | 'despesa',
-      descricao: l.descricao,
-      categoria: l.categoria,
-      valor: l.valor,
-    })),
-    ...transferencias,
-  ].sort((a, b) => a.data.localeCompare(b.data));
+  const aReceber = atrasadosDeParcelas(rec, hoje);
+  const aPagar = atrasadosDeParcelas(pag, hoje);
+  return {
+    aReceber,
+    aPagar,
+    totalReceber: aReceber.reduce((s, i) => s + i.valorAberto, 0),
+    totalPagar: aPagar.reduce((s, i) => s + i.valorAberto, 0),
+  };
+}
 
-  // Saldo corrente: parte do saldo inicial do CA; receitas somam, despesas
-  // subtraem. Transferências entre contas próprias não movem o saldo total
-  // (mantêm o anterior), pois se anulam e a API não informa a direção.
+// ──────────────────────────────────────────────────────────────
+// Extrato de caixa
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Busca o período no CA (regime de caixa), calcula o saldo corrente e SALVA no
+ * banco, substituindo o extrato anterior. Também grava o snapshot de atrasados.
+ */
+export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string): Promise<ExtratoSalvo> {
+  const vencDe = addMeses(de, -MARGEM_ATRASO_MESES);
+  const vencAte = addMeses(ate, MARGEM_ADIANTAMENTO_MESES);
+
+  const [saldoInicial, parcelasRec, parcelasPag, atrasados] = await Promise.all([
+    buscarSaldoInicial(empresa, de),
+    buscarParcelasComBaixas(empresa, 'receita', vencDe, vencAte),
+    buscarParcelasComBaixas(empresa, 'despesa', vencDe, vencAte),
+    calcularAtrasados(empresa),
+  ]);
+
+  // Explode as baixas cuja data de pagamento cai no período [de, ate].
+  const eventos = [] as Array<{ id: string; data: string; tipo: 'receita' | 'despesa'; descricao: string; categoria: string; valor: number }>;
+  for (const p of [...parcelasRec, ...parcelasPag]) {
+    for (const b of p.baixas) {
+      if (b.data >= de && b.data <= ate && b.valor) {
+        eventos.push({
+          id: p.id,
+          data: b.data,
+          tipo: p.tipo,
+          descricao: p.descricao,
+          categoria: p.categoria,
+          valor: Math.abs(b.valor),
+        });
+      }
+    }
+  }
+  eventos.sort((a, b) => a.data.localeCompare(b.data));
+
+  // Saldo corrente: parte do saldo inicial do CA; recebimentos somam, pagamentos subtraem.
   let saldo = saldoInicial;
-  const itens: ItemExtratoSalvo[] = base.map((it) => {
-    if (it.tipo === 'receita') saldo += it.valor;
-    else if (it.tipo === 'despesa') saldo -= it.valor;
-    return { ...it, saldo };
+  const itens: ItemExtratoSalvo[] = eventos.map((it) => {
+    saldo += it.tipo === 'receita' ? it.valor : -it.valor;
+    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo };
   });
 
   const totalReceitas = somaPorTipo(itens, 'receita');
@@ -58,7 +142,7 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
   // Substitui o extrato anterior desta empresa.
   await supabaseAdmin.from('dre_extrato_item').delete().eq('empresa', empresa);
   const { error: eMeta } = await supabaseAdmin.from('dre_extrato').upsert(
-    { empresa, periodo_de: de, periodo_ate: ate, saldo_inicial: saldoInicial, atualizado_em: atualizadoEm },
+    { empresa, periodo_de: de, periodo_ate: ate, saldo_inicial: saldoInicial, atualizado_em: atualizadoEm, atrasados },
     { onConflict: 'empresa' },
   );
   if (eMeta) throw new Error(`Falha ao salvar extrato: ${eMeta.message}`);
@@ -89,10 +173,11 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
     totalReceitas,
     totalDespesas,
     saldoFinal: saldoInicial + totalReceitas - totalDespesas,
+    atrasados,
   };
 }
 
-/** Lê o extrato salvo (metadados + itens com saldo). */
+/** Lê o extrato salvo (metadados + itens com saldo + atrasados). */
 export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | null> {
   const { data: meta } = await supabaseAdmin
     .from('dre_extrato')
@@ -133,14 +218,15 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
     totalReceitas,
     totalDespesas,
     saldoFinal: saldoInicial + totalReceitas - totalDespesas,
+    atrasados: (meta.atrasados as AtrasadosResumo | null) ?? null,
   };
 }
 
-/** Lê apenas os metadados do extrato (período disponível + atualização). */
+/** Lê apenas os metadados do extrato (período + atualização + atrasados). */
 export async function lerMetaExtrato(empresa: ContaCA): Promise<MetaExtrato | null> {
   const { data } = await supabaseAdmin
     .from('dre_extrato')
-    .select('periodo_de, periodo_ate, atualizado_em')
+    .select('periodo_de, periodo_ate, atualizado_em, atrasados')
     .eq('empresa', empresa)
     .maybeSingle();
   if (!data) return null;
@@ -148,13 +234,14 @@ export async function lerMetaExtrato(empresa: ContaCA): Promise<MetaExtrato | nu
     periodoDe: data.periodo_de as string,
     periodoAte: data.periodo_ate as string,
     atualizadoEm: data.atualizado_em as string,
+    atrasados: (data.atrasados as AtrasadosResumo | null) ?? null,
   };
 }
 
 /**
- * Lê os lançamentos (receitas/despesas) do extrato salvo dentro da janela de
- * datas — é o que alimenta a DRE (transferências são ignoradas no cálculo).
- * Retorna no formato LancamentoCA para reaproveitar o motor de cálculo.
+ * Lê os lançamentos do extrato salvo dentro da janela de datas (por data de
+ * pagamento) — alimenta a DRE de caixa. Formato LancamentoCA para reaproveitar
+ * o motor de cálculo (o campo dataVencimento carrega a data do pagamento).
  */
 export async function lerLancamentosDoExtrato(empresa: ContaCA, de: string, ate: string): Promise<LancamentoCA[]> {
   const { data, error } = await supabaseAdmin
@@ -173,7 +260,7 @@ export async function lerLancamentosDoExtrato(empresa: ContaCA, de: string, ate:
     pago: 0,
     dataVencimento: r.data as string,
     dataCompetencia: r.data as string,
-    dataPagamento: null,
+    dataPagamento: r.data as string,
     situacao: '',
     descricao: (r.descricao as string) ?? '',
     tipo: r.tipo as 'receita' | 'despesa',

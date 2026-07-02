@@ -1,5 +1,5 @@
 import { chamadaApi } from '../../integracoes/contaAzul';
-import type { LancamentoCA, ItemExtrato } from './dreTypes';
+import type { LancamentoCA, ItemExtrato, ParcelaCA, BaixaCA } from './dreTypes';
 
 type ContaCA = 'ass' | 'netr';
 
@@ -11,6 +11,11 @@ type ContaCA = 'ass' | 'netr';
 const EP_RECEITAS = '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar';
 const EP_DESPESAS = '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar';
 const EP_TRANSFERENCIAS = '/v1/financeiro/transferencias';
+
+// Endpoints que trazem as parcelas COM as baixas embutidas (itens.baixas) —
+// usados para o regime de caixa (data real do pagamento/recebimento).
+const EP_CONTAS_RECEBER = '/v1/financeiro/contas-a-receber';
+const EP_CONTAS_PAGAR = '/v1/financeiro/contas-a-pagar';
 
 // tamanho_pagina aceita apenas: 10, 20, 50, 100, 200, 500, 1000
 const TAMANHO_PAGINA = 200;
@@ -207,6 +212,60 @@ export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promis
   } catch {
     return 0;
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Parcelas com baixas (regime de caixa)
+// ──────────────────────────────────────────────────────────────
+
+/** Extrai as baixas (pagamentos/recebimentos) de uma parcela crua, de forma
+ *  defensiva (o CA pode nomear os campos de formas diferentes). */
+function extrairBaixas(item: Record<string, unknown>): BaixaCA[] {
+  const arr = (item.baixas ?? item.pagamentos ?? item.recebimentos) as unknown;
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((b) => {
+      const o = b as Record<string, unknown>;
+      const data = (o.data_baixa ?? o.data_pagamento ?? o.data_recebimento ?? o.data ?? '') as string;
+      const valor = Number(o.valor ?? o.valor_baixa ?? o.valor_pago ?? o.total ?? 0);
+      return { data: String(data).slice(0, 10), valor };
+    })
+    .filter((b) => b.data && b.valor);
+}
+
+function mapearParcela(item: Record<string, unknown>, tipo: 'receita' | 'despesa'): ParcelaCA {
+  const baixas = extrairBaixas(item);
+  const totalBaixado = baixas.reduce((s, b) => s + Math.abs(b.valor), 0);
+  return {
+    id: extrairId(item),
+    tipo,
+    categoria: extrairCategoria(item),
+    descricao: extrairDescricao(item),
+    valorTotal: Math.abs(extrairValor(item)),
+    dataVencimento: extrairDataVencimento(item),
+    dataCompetencia: extrairDataCompetencia(item),
+    totalBaixado,
+    baixas,
+  };
+}
+
+/**
+ * Busca parcelas (com baixas embutidas) por janela de VENCIMENTO. Como a API não
+ * filtra por data de pagamento, o chamador amplia a janela e depois filtra as
+ * baixas pela data real. `tipo` decide o endpoint (receber/pagar).
+ */
+export async function buscarParcelasComBaixas(
+  empresa: ContaCA,
+  tipo: 'receita' | 'despesa',
+  de: string,
+  ate: string,
+): Promise<ParcelaCA[]> {
+  const endpoint = tipo === 'receita' ? EP_CONTAS_RECEBER : EP_CONTAS_PAGAR;
+  const itens = await buscarPaginado(empresa, endpoint, {
+    data_vencimento_de: de,
+    data_vencimento_ate: ate,
+  });
+  return itens.map((i) => mapearParcela(i, tipo));
 }
 
 /** Busca transferências entre contas financeiras no período. */

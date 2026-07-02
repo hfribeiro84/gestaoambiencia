@@ -99,6 +99,7 @@ supabase/migrations/
   0006_nf_associacao_manual.sql  # associação manual NF ↔ NETR
   0007_dre_subtotais.sql         # tabela dre_subtotal (subtotais configuráveis)
   0008_dre_extrato.sql           # tabelas dre_extrato + dre_extrato_item (base da DRE)
+  0009_dre_extrato_atrasados.sql # coluna dre_extrato.atrasados (jsonb) — snapshot de vencidos
 ```
 
 ## Banco — tabelas
@@ -117,8 +118,8 @@ supabase/migrations/
 | `dre_snapshot`       | 0005 | Snapshots calculados do DRE (dados jsonb). |
 | `nf_associacao_manual`| 0006 | Associação manual NF ↔ unidade NETR. |
 | `dre_subtotal`       | 0007 | Subtotais configuráveis (= Resultado Op., etc.). |
-| `dre_extrato`        | 0008 | Metadados do extrato salvo por empresa (período, saldo inicial, atualização). |
-| `dre_extrato_item`   | 0008 | Lançamentos do extrato salvo (data, tipo, categoria, valor, saldo corrente). Base da DRE. |
+| `dre_extrato`        | 0008/0009 | Metadados do extrato salvo por empresa (período, saldo inicial, atualização, `atrasados` jsonb). |
+| `dre_extrato_item`   | 0008 | Lançamentos do extrato salvo (data do pagamento, tipo, categoria, valor, saldo). Base da DRE (caixa). |
 
 RLS habilitado em todas. `integracao_config` sem policy de usuário comum (protegida).
 
@@ -144,7 +145,8 @@ RLS habilitado em todas. `integracao_config` sem policy de usuário comum (prote
 | DELETE | `/snapshots/:empresa/:id` | Exclui snapshot. |
 | POST | `/extrato/:empresa` | Busca período no CA (body `de`,`ate`), calcula saldo e **salva** o extrato (substitui). |
 | GET  | `/extrato/:empresa` | Extrato salvo (metadados + itens com saldo). |
-| GET  | `/extrato-meta/:empresa` | Só período disponível + data de atualização do extrato. |
+| GET  | `/extrato-meta/:empresa` | Período disponível + data de atualização + resumo de atrasados. |
+| GET  | `/debug/parcelas/:empresa/:mes/:ano` | Schema cru de contas-a-receber (parcelas + baixas). |
 | GET  | `/resumo/:empresa` | Resumo executivo IA (Haiku) a partir do último snapshot. |
 | GET  | `/debug/raw/:empresa/:mes/:ano` | Resposta bruta da API CA (diagnóstico). |
 | GET  | `/debug/amostra/:empresa/:mes/:ano` | Amostra de lançamentos parseados. |
@@ -166,18 +168,25 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 
 ## Módulo DRE — arquitetura
 
-- **Extrato como base (0008):** o extrato materializado (`dre_extrato` +
-  `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é mais consultado a
-  cada cálculo. O usuário atualiza o extrato por período (modal início/fim na aba Extrato):
-  `POST /extrato/:empresa` busca tudo no CA, pega o saldo inicial na data inicial, calcula
-  o **saldo corrente** linha a linha e **substitui** o extrato salvo. As abas DRE e Extrato
-  mostram o período disponível e a data/hora de atualização. A aba Histórico foi removida.
-- **Cálculo:** regime de vencimento (parcelas entram no mês do `dataVencimento`).
-  A função `calcularDRE()` lê os lançamentos do **extrato salvo** (`lerLancamentosDoExtrato`,
-  transferências ignoradas), acumula por categoria usando `dre_mapeamento`, soma
-  subcategorias para pais, calcula totais acumulados (receitaLiquida, resultadoOperacional,
-  resultadoLiquido, fluxoCaixaLivre) e salva snapshot em `dre_snapshot`. A DRE fica estática
-  na tela (carrega o último snapshot ao entrar) até o usuário clicar "Atualizar".
+- **Extrato como base (0008), REGIME DE CAIXA:** o extrato materializado (`dre_extrato` +
+  `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é consultado a cada
+  cálculo. O usuário atualiza por período (modal início/fim na aba Extrato):
+  `POST /extrato/:empresa` busca no CA e monta o caixa real. Como a API v2 não filtra por
+  data de pagamento, `dreExtrato` busca as **parcelas com baixas** (`buscarParcelasComBaixas`
+  → `/v1/financeiro/contas-a-receber|contas-a-pagar`) numa janela de vencimento ampla
+  (−36/+12 meses), **explode as baixas** e filtra as que caíram no período pela `data_baixa`.
+  O saldo parte do saldo inicial do CA na data inicial e acumula por pagamento/recebimento.
+  Substitui o extrato salvo. Abas DRE e Extrato mostram período + atualização. Histórico removido.
+- **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
+  (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
+  salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato
+  (informativo, **fora** do saldo de caixa).
+- **Cálculo:** regime de caixa — cada baixa entra no mês do **pagamento/recebimento**.
+  `calcularDRE()` lê do **extrato salvo** (`lerLancamentosDoExtrato`; o campo `dataVencimento`
+  carrega a data do pagamento), acumula por categoria via `dre_mapeamento`, soma subcategorias,
+  calcula totais (receitaLiquida, resultadoOperacional, resultadoLiquido, fluxoCaixaLivre) e
+  salva snapshot em `dre_snapshot`. A DRE fica estática (carrega o último snapshot ao entrar)
+  até o usuário clicar "Atualizar".
 - **Subtotais:** lidos de `dre_subtotal` no frontend. Cada subtotal tem `apos_tipo`
   (qual grupo de categorias antecede a linha) e `formula` (qual campo de
   `TotaisCalculados` mostrar). `TabelaDRE` os agrupa por `apos_tipo` e renderiza

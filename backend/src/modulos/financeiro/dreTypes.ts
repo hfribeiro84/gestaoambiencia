@@ -80,6 +80,43 @@ export interface CategoriaCA {
   count: number;
 }
 
+/** Uma baixa (pagamento/recebimento efetivo) de uma parcela. */
+export interface BaixaCA {
+  data: string;   // data_baixa / data_pagamento (regime de caixa)
+  valor: number;  // valor efetivamente movimentado nesta baixa
+}
+
+/** Parcela do CA com suas baixas embutidas (contas-a-receber / contas-a-pagar). */
+export interface ParcelaCA {
+  id: string;
+  tipo: 'receita' | 'despesa';
+  categoria: string;
+  descricao: string;
+  valorTotal: number;
+  dataVencimento: string;
+  dataCompetencia: string;
+  totalBaixado: number;   // soma das baixas
+  baixas: BaixaCA[];
+}
+
+/** Item de conta em atraso (vencida e ainda em aberto). */
+export interface ItemAtraso {
+  id: string;
+  descricao: string;
+  categoria: string;
+  dataVencimento: string;
+  valorAberto: number;   // valorTotal - totalBaixado
+  diasAtraso: number;
+}
+
+/** Resumo de contas em atraso (a receber e a pagar), snapshot do extrato. */
+export interface AtrasadosResumo {
+  aReceber: ItemAtraso[];
+  aPagar: ItemAtraso[];
+  totalReceber: number;
+  totalPagar: number;
+}
+
 export type FormulaSubtotal = 'receita_liquida' | 'resultado_operacional' | 'resultado_liquido' | 'fluxo_caixa_livre';
 
 export interface DreSubtotal {
@@ -124,7 +161,7 @@ export interface ItemExtratoSalvo extends ItemExtrato {
   saldo: number;
 }
 
-/** Extrato materializado no banco — base de dados da DRE. */
+/** Extrato materializado no banco — base de dados da DRE (regime de caixa). */
 export interface ExtratoSalvo {
   empresa: 'ass' | 'netr';
   periodoDe: string;
@@ -135,6 +172,7 @@ export interface ExtratoSalvo {
   totalReceitas: number;
   totalDespesas: number;
   saldoFinal: number;
+  atrasados?: AtrasadosResumo | null;
 }
 
 /** Metadados do extrato salvo (para exibir período disponível + atualização). */
@@ -142,4 +180,5 @@ export interface MetaExtrato {
   periodoDe: string;
   periodoAte: string;
   atualizadoEm: string;
+  atrasados?: AtrasadosResumo | null;
 }

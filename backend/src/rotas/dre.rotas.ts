@@ -328,7 +328,7 @@ rotasDre.delete('/financeiro/dre/snapshots/:empresa/:id', autenticar, async (req
 rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
   try {
     const { empresa } = req.params;
-    const { de, ate, saldoInicial } = req.body as { de?: string; ate?: string; saldoInicial?: number };
+    const { de, ate, saldoInicial, reprocessar } = req.body as { de?: string; ate?: string; saldoInicial?: number; reprocessar?: boolean };
 
     if (empresa !== 'ass' && empresa !== 'netr') {
       res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
@@ -344,7 +344,7 @@ rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Reques
     }
 
     const saldo = typeof saldoInicial === 'number' ? saldoInicial : undefined;
-    const extrato = await gerarESalvarExtrato(empresa, de, ate, saldo);
+    const extrato = await gerarESalvarExtrato(empresa, de, ate, saldo, { ignorarCache: reprocessar === true });
     res.json(extrato);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });

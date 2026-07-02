@@ -52,7 +52,7 @@ Desenvolvimento **modular e incremental** — um módulo por vez sobre a fundaç
 ```
 backend/
   src/
-    index.ts                     # bootstrap Express + agendador (node-cron diário 05:00)
+    index.ts                     # bootstrap Express + agendadores (node-cron: extrato DRE 04:00, sync 05:00)
     config/env.ts                # lê/valida variáveis de ambiente
     config/supabase.ts           # supabaseAdmin (service_role) + validarTokenUsuario
     middleware/auth.ts           # valida JWT do Supabase (Bearer)
@@ -101,6 +101,8 @@ supabase/migrations/
   0008_dre_extrato.sql           # tabelas dre_extrato + dre_extrato_item (base da DRE)
   0009_dre_extrato_atrasados.sql # coluna dre_extrato.atrasados (jsonb) — snapshot de vencidos
   0010_dre_extrato_previsto.sql  # coluna dre_extrato_item.previsto (bool) — caixa x previsto
+  0011_nf_planilha_fonte_url.sql # coluna nf_planilha_salva.fonte_url (link Google Sheets)
+  0012_dre_baixa_cache.sql       # cache de baixas por parcela (invalidação por data_alteracao)
 ```
 
 ## Banco — tabelas
@@ -180,6 +182,12 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
   (`data_pagamento` + `valor_composicao.valor_liquido`). Chamadas ao CA passam por throttle
   (~8/s) + backoff em 429 (`fetchCA` em `contaAzul.ts`), respeitando o limite de 600/min.
   Substitui o extrato salvo. Abas DRE e Extrato mostram período + atualização. Histórico removido.
+- **Cache de baixas + cron noturno (0012):** `enriquecerComBaixas` guarda as baixas em
+  `dre_baixa_cache` (chave empresa+parcela_id), invalidando por `data_alteracao` — só rebusca no
+  CA o que mudou, deixando as atualizações seguintes rápidas. O botão "Reprocessar tudo" (ou
+  `reprocessar:true` no POST) ignora o cache e refaz do zero. Um cron às **04:00**
+  (`atualizarExtratosDiario`) reprocessa o período salvo de cada empresa — barato pelo cache — e
+  rola sozinho a fronteira caixa/previsto + entra novos pagamentos.
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
   salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato

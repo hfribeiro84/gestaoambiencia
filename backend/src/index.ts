@@ -15,6 +15,7 @@ import { rotasFinanceiro } from './rotas/financeiro.rotas';
 import { rotasDre } from './rotas/dre.rotas';
 import { tratadorDeErros } from './middleware/erros';
 import { executarSincronizacao } from './servicos/sincronizacao';
+import { atualizarExtratosDiario } from './modulos/financeiro/dreExtrato';
 
 const app = express();
 
@@ -47,6 +48,16 @@ cron.schedule('0 5 * * *', () => {
   executarSincronizacao()
     .then((r) => console.log('[cron]', r.mensagem))
     .catch((e) => console.error('[cron] erro na sincronização:', e.message));
+});
+
+// Atualização noturna do extrato DRE — 04:00 (antes da sincronização, p/ não
+// concorrer). Reprocessa o período salvo de cada empresa; o cache de baixas
+// deixa isso barato (só rebusca o que mudou no Conta Azul).
+cron.schedule('0 4 * * *', () => {
+  console.log('[cron] atualizando extratos DRE...');
+  atualizarExtratosDiario()
+    .then((r) => console.log('[cron extrato]', r))
+    .catch((e) => console.error('[cron extrato] erro:', e.message));
 });
 
 app.listen(env.porta, () => {

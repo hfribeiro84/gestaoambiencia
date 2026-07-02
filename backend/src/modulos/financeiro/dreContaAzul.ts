@@ -1,4 +1,5 @@
 import { chamadaApi } from '../../integracoes/contaAzul';
+import { supabaseAdmin } from '../../config/supabase';
 import type { LancamentoCA, ItemExtrato, ParcelaCA, BaixaCA } from './dreTypes';
 
 type ContaCA = 'ass' | 'netr';
@@ -255,17 +256,81 @@ export async function buscarBaixasDaParcela(empresa: ContaCA, parcelaId: string)
     .filter((b) => b.data && b.valor);
 }
 
-/** Enriquece as parcelas PAGAS com suas baixas (concorrência limitada p/ rate limit). */
-export async function enriquecerComBaixas(empresa: ContaCA, parcelas: ParcelaCA[], limite = 6): Promise<void> {
+// ── Cache de baixas (tabela dre_baixa_cache) ──────────────────────────────────
+
+/** Lê o cache de baixas das parcelas informadas (chunk no `.in` p/ não estourar URL). */
+async function lerCacheBaixas(
+  empresa: ContaCA,
+  ids: string[],
+): Promise<Map<string, { data_alteracao: string; baixas: BaixaCA[] }>> {
+  const mapa = new Map<string, { data_alteracao: string; baixas: BaixaCA[] }>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data } = await supabaseAdmin
+      .from('dre_baixa_cache')
+      .select('parcela_id, data_alteracao, baixas')
+      .eq('empresa', empresa)
+      .in('parcela_id', chunk);
+    for (const r of data ?? []) {
+      mapa.set(r.parcela_id as string, {
+        data_alteracao: (r.data_alteracao as string) ?? '',
+        baixas: (r.baixas as BaixaCA[]) ?? [],
+      });
+    }
+  }
+  return mapa;
+}
+
+/** Grava/atualiza o cache de baixas das parcelas rebuscadas. */
+async function salvarCacheBaixas(empresa: ContaCA, parcelas: ParcelaCA[]): Promise<void> {
+  const rows = parcelas.map((p) => ({
+    empresa,
+    parcela_id: p.id,
+    data_alteracao: p.dataAlteracao ?? '',
+    baixas: p.baixas,
+    atualizado_em: new Date().toISOString(),
+  }));
+  for (let i = 0; i < rows.length; i += 500) {
+    await supabaseAdmin.from('dre_baixa_cache').upsert(rows.slice(i, i + 500), { onConflict: 'empresa,parcela_id' });
+  }
+}
+
+/**
+ * Enriquece as parcelas PAGAS com suas baixas. Usa o cache (dre_baixa_cache):
+ * só rebusca no CA as parcelas cujo `data_alteracao` mudou (ou tudo, se
+ * `ignorarCache`). Concorrência limitada por causa do rate limit.
+ */
+export async function enriquecerComBaixas(
+  empresa: ContaCA,
+  parcelas: ParcelaCA[],
+  opts: { ignorarCache?: boolean; limite?: number } = {},
+): Promise<void> {
+  const limite = opts.limite ?? 6;
   const pagas = parcelas.filter((p) => p.totalBaixado > 0.005 && p.id);
+  if (pagas.length === 0) return;
+
+  const cache = opts.ignorarCache ? new Map() : await lerCacheBaixas(empresa, pagas.map((p) => p.id));
+
+  const paraBuscar: ParcelaCA[] = [];
+  for (const p of pagas) {
+    const c = cache.get(p.id);
+    if (c && c.data_alteracao === (p.dataAlteracao ?? '')) {
+      p.baixas = c.baixas; // cache válido — não chama o CA
+    } else {
+      paraBuscar.push(p);
+    }
+  }
+
   let i = 0;
   const worker = async () => {
-    while (i < pagas.length) {
-      const p = pagas[i++];
+    while (i < paraBuscar.length) {
+      const p = paraBuscar[i++];
       p.baixas = await buscarBaixasDaParcela(empresa, p.id);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limite, pagas.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(limite, paraBuscar.length) }, worker));
+
+  if (paraBuscar.length > 0) await salvarCacheBaixas(empresa, paraBuscar);
 }
 
 /** Busca transferências entre contas financeiras no período. */

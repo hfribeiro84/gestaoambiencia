@@ -130,7 +130,13 @@ export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResu
  * Calcula o saldo corrente (realizado + projeção) e SALVA no banco, substituindo
  * o extrato anterior. Também grava o snapshot de atrasados.
  */
-export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: string, saldoInicialManual?: number): Promise<ExtratoSalvo> {
+export async function gerarESalvarExtrato(
+  empresa: ContaCA,
+  de: string,
+  ate: string,
+  saldoInicialManual?: number,
+  opts: { ignorarCache?: boolean } = {},
+): Promise<ExtratoSalvo> {
   const hoje = hojeISO();
   const ontem = addDias(hoje, -1);
   const caixaAte = ate < ontem ? ate : ontem; // realizado vai até ontem (ou fim, se antes)
@@ -157,7 +163,10 @@ export async function gerarESalvarExtrato(empresa: ContaCA, de: string, ate: str
     const candRec = pr.filter(candidata);
     const candPag = pp.filter(candidata);
 
-    await Promise.all([enriquecerComBaixas(empresa, candRec), enriquecerComBaixas(empresa, candPag)]);
+    await Promise.all([
+      enriquecerComBaixas(empresa, candRec, { ignorarCache: opts.ignorarCache }),
+      enriquecerComBaixas(empresa, candPag, { ignorarCache: opts.ignorarCache }),
+    ]);
     for (const p of [...candRec, ...candPag]) {
       for (const b of p.baixas) {
         if (b.data >= de && b.data <= caixaAte && b.valor) {
@@ -287,6 +296,43 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
     saldoFinal: saldoInicial + totalReceitas - totalDespesas,
     atrasados: (meta.atrasados as AtrasadosResumo | null) ?? null,
   };
+}
+
+/** Lê a configuração do extrato salvo (período + saldo inicial) — usada pelo cron. */
+export async function lerConfigExtrato(empresa: ContaCA): Promise<{ periodoDe: string; periodoAte: string; saldoInicial: number } | null> {
+  const { data } = await supabaseAdmin
+    .from('dre_extrato')
+    .select('periodo_de, periodo_ate, saldo_inicial')
+    .eq('empresa', empresa)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    periodoDe: data.periodo_de as string,
+    periodoAte: data.periodo_ate as string,
+    saldoInicial: Number(data.saldo_inicial),
+  };
+}
+
+/**
+ * Reprocessa o extrato salvo de cada empresa (mantendo o período e o saldo
+ * inicial informado). Chamado pelo agendador noturno — com o cache de baixas,
+ * só rebusca no CA o que mudou. Assim a fronteira caixa/previsto rola sozinha e
+ * novos pagamentos entram automaticamente.
+ */
+export async function atualizarExtratosDiario(): Promise<string> {
+  const empresas: ContaCA[] = ['ass', 'netr'];
+  const resultados: string[] = [];
+  for (const emp of empresas) {
+    const cfg = await lerConfigExtrato(emp);
+    if (!cfg) { resultados.push(`${emp}: sem extrato salvo`); continue; }
+    try {
+      await gerarESalvarExtrato(emp, cfg.periodoDe, cfg.periodoAte, cfg.saldoInicial);
+      resultados.push(`${emp}: ok (${cfg.periodoDe}..${cfg.periodoAte})`);
+    } catch (e) {
+      resultados.push(`${emp}: erro — ${(e as Error).message}`);
+    }
+  }
+  return resultados.join(' | ');
 }
 
 /** Lê apenas os metadados do extrato (período + atualização + atrasados). */

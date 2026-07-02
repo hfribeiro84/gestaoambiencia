@@ -323,7 +323,8 @@ export function DREGerencial() {
   }, [aba, carregarExtratoSalvo]);
 
   // Atualiza o extrato: busca o período no Conta Azul e salva no banco.
-  async function atualizarExtrato() {
+  // `reprocessar` ignora o cache de baixas (refaz tudo do zero).
+  async function atualizarExtrato(reprocessar = false) {
     if (!extratoDe || !extratoAte) { setErroExtrato('Informe o período inicial e final.'); return; }
     setAtualizandoExtrato(true);
     setErroExtrato('');
@@ -334,17 +335,24 @@ export function DREGerencial() {
         body: JSON.stringify({
           de: extratoDe,
           ate: extratoAte,
+          ...(reprocessar ? { reprocessar: true } : {}),
           ...(Number.isNaN(saldoNum) ? {} : { saldoInicial: saldoNum }),
         }),
       });
       setExtratoSalvo(ext);
-      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm });
+      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm, atrasados: ext.atrasados });
       setModalExtrato(false);
     } catch (e) {
       setErroExtrato((e as Error).message);
     } finally {
       setAtualizandoExtrato(false);
     }
+  }
+
+  function reprocessarExtrato() {
+    if (!extratoSalvo) return;
+    if (!window.confirm('Reprocessar todo o extrato ignorando o cache de baixas? Refaz do zero — pode demorar mais.')) return;
+    atualizarExtrato(true);
   }
 
   // ── Carregar configurações ─────────────────────────────────────────────────
@@ -598,7 +606,8 @@ export function DREGerencial() {
           atualizando={atualizandoExtrato}
           onAbrirModal={() => setModalExtrato(true)}
           onFecharModal={() => setModalExtrato(false)}
-          onAtualizar={atualizarExtrato}
+          onAtualizar={() => atualizarExtrato(false)}
+          onReprocessar={reprocessarExtrato}
         />
       )}
 
@@ -1274,11 +1283,12 @@ interface AbaExtratoProps {
   onAbrirModal: () => void;
   onFecharModal: () => void;
   onAtualizar: () => void;
+  onReprocessar: () => void;
 }
 
 function AbaExtrato({
   empresa, extrato, meta, carregando, erro, modalAberto,
-  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar,
+  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar, onReprocessar,
 }: AbaExtratoProps) {
   return (
     <div>
@@ -1298,12 +1308,24 @@ function AbaExtrato({
             <div className="text-gray-500">Nenhum extrato salvo ainda para esta empresa.</div>
           )}
         </div>
-        <button
-          onClick={onAbrirModal}
-          className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium hover:bg-slate-700"
-        >
-          Atualizar extrato
-        </button>
+        <div className="flex items-center gap-2">
+          {meta && (
+            <button
+              onClick={onReprocessar}
+              disabled={atualizando}
+              title="Refaz o extrato do zero, ignorando o cache de baixas"
+              className="text-gray-500 px-3 py-2 rounded text-sm hover:text-gray-700 disabled:opacity-50"
+            >
+              Reprocessar tudo
+            </button>
+          )}
+          <button
+            onClick={onAbrirModal}
+            className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium hover:bg-slate-700"
+          >
+            Atualizar extrato
+          </button>
+        </div>
       </div>
 
       <PainelAtrasados atrasados={meta?.atrasados} />

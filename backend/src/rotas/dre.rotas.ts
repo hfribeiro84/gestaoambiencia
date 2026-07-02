@@ -4,10 +4,11 @@ import { randomUUID } from 'crypto';
 import { autenticar } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { calcularDRE } from '../modulos/financeiro/dreCalculo';
-import { buscarSaldoInicial, buscarTransferencias, buscarLancamentosCA, buscarLancamentosExtrato } from '../modulos/financeiro/dreContaAzul';
+import { buscarLancamentosCA } from '../modulos/financeiro/dreContaAzul';
+import { gerarESalvarExtrato, lerExtratoSalvo, lerMetaExtrato } from '../modulos/financeiro/dreExtrato';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { criarCliente } from '../integracoes/claude';
-import type { EmpresaDRE, ItemExtrato, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
+import type { EmpresaDRE, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
 
 const TIPOS_VALIDOS = new Set<TipoCategoria>(['receita', 'deducao', 'custo', 'despesa', 'financeiro', 'divisao']);
 const FORMULAS_VALIDAS = new Set(['receita_liquida', 'resultado_operacional', 'resultado_liquido', 'fluxo_caixa_livre']);
@@ -320,58 +321,63 @@ rotasDre.delete('/financeiro/dre/snapshots/:empresa/:id', autenticar, async (req
 });
 
 // ──────────────────────────────────────────────────────────────
-// GET /financeiro/dre/extrato/:empresa/:mes/:ano
+// POST /financeiro/dre/extrato/:empresa  (body: { de, ate })
+// Busca o período completo no Conta Azul, calcula o saldo corrente e SALVA no
+// banco (substituindo). Essa tabela vira a base de dados da DRE.
 // ──────────────────────────────────────────────────────────────
-rotasDre.get('/financeiro/dre/extrato/:empresa/:mes/:ano', autenticar, async (req: Request, res: Response) => {
+rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
   try {
     const { empresa } = req.params;
-    const mes = parseInt(req.params.mes, 10);
-    const ano = parseInt(req.params.ano, 10);
+    const { de, ate } = req.body as { de?: string; ate?: string };
 
-    if (!empresaValida(empresa) || empresa === 'consolidado') {
+    if (empresa !== 'ass' && empresa !== 'netr') {
       res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
       return;
     }
+    if (!de || !ate) {
+      res.status(400).json({ erro: 'Informe as datas de início (de) e fim (ate).' });
+      return;
+    }
+    if (de > ate) {
+      res.status(400).json({ erro: 'A data inicial não pode ser maior que a final.' });
+      return;
+    }
 
-    const conta = contaCA(empresa);
-    const de = primeiroDia(mes, ano);
-    const ate = ultimoDia(mes, ano);
+    const extrato = await gerarESalvarExtrato(empresa, de, ate);
+    res.json(extrato);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
 
-    const [saldoInicial, transferencias, lancamentos] = await Promise.all([
-      buscarSaldoInicial(conta, de),
-      buscarTransferencias(conta, de, ate),
-      buscarLancamentosExtrato(conta, de, ate),
-    ]);
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/extrato/:empresa  — extrato salvo (metadados + itens)
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    if (empresa !== 'ass' && empresa !== 'netr') {
+      res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
+      return;
+    }
+    res.json(await lerExtratoSalvo(empresa));
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
 
-    const itens: ItemExtrato[] = [
-      ...lancamentos.map((l) => ({
-        id: l.id,
-        data: l.dataPagamento ?? l.dataVencimento,
-        tipo: l.tipo as 'receita' | 'despesa',
-        descricao: l.descricao,
-        categoria: l.categoria,
-        valor: l.valor,
-      })),
-      ...transferencias,
-    ].sort((a, b) => a.data.localeCompare(b.data));
-
-    const totalReceitas = itens
-      .filter((i) => i.tipo === 'receita')
-      .reduce((acc, i) => acc + i.valor, 0);
-    const totalDespesas = itens
-      .filter((i) => i.tipo === 'despesa')
-      .reduce((acc, i) => acc + i.valor, 0);
-
-    res.json({
-      empresa,
-      mes,
-      ano,
-      saldoInicial,
-      itens,
-      totalReceitas,
-      totalDespesas,
-      saldoFinal: saldoInicial + totalReceitas - totalDespesas,
-    });
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/extrato-meta/:empresa  — só período + atualização
+// (consolidado usa o extrato da ASS como referência de período)
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/extrato-meta/:empresa', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    if (!empresaValida(empresa)) {
+      res.status(400).json({ erro: 'Empresa inválida.' });
+      return;
+    }
+    res.json(await lerMetaExtrato(contaCA(empresa)));
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

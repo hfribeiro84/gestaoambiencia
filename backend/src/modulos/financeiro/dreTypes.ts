@@ -118,3 +118,28 @@ export interface DadosExtrato {
   totalDespesas: number;
   saldoFinal: number;
 }
+
+/** Item do extrato salvo, com o saldo corrente (acumulado) após o lançamento. */
+export interface ItemExtratoSalvo extends ItemExtrato {
+  saldo: number;
+}
+
+/** Extrato materializado no banco — base de dados da DRE. */
+export interface ExtratoSalvo {
+  empresa: 'ass' | 'netr';
+  periodoDe: string;
+  periodoAte: string;
+  saldoInicial: number;
+  atualizadoEm: string;
+  itens: ItemExtratoSalvo[];
+  totalReceitas: number;
+  totalDespesas: number;
+  saldoFinal: number;
+}
+
+/** Metadados do extrato salvo (para exibir período disponível + atualização). */
+export interface MetaExtrato {
+  periodoDe: string;
+  periodoAte: string;
+  atualizadoEm: string;
+}

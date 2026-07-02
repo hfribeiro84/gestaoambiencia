@@ -6,7 +6,7 @@ import { api } from '../../lib/api';
 type EmpresaDRE = 'ass' | 'netr' | 'consolidado';
 type TipoCategoria = 'receita' | 'deducao' | 'custo' | 'despesa' | 'financeiro' | 'divisao';
 type FormulaSubtotal = 'receita_liquida' | 'resultado_operacional' | 'resultado_liquido' | 'fluxo_caixa_livre';
-type Aba = 'dre' | 'extrato' | 'historico' | 'configuracoes';
+type Aba = 'dre' | 'extrato' | 'configuracoes';
 
 interface ValorMes { mes: number; ano: number; valor: number; }
 
@@ -96,24 +96,25 @@ interface ItemExtrato {
   descricao: string;
   categoria: string;
   valor: number;
+  saldo?: number;
 }
 
-interface DadosExtrato {
+interface ExtratoSalvo {
   empresa: string;
-  mes: number;
-  ano: number;
+  periodoDe: string;
+  periodoAte: string;
   saldoInicial: number;
+  atualizadoEm: string;
   itens: ItemExtrato[];
   totalReceitas: number;
   totalDespesas: number;
   saldoFinal: number;
 }
 
-interface SnapshotInfo {
-  id: string;
-  mes_ref: number;
-  ano_ref: number;
-  calculado_em: string;
+interface MetaExtrato {
+  periodoDe: string;
+  periodoAte: string;
+  atualizadoEm: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -145,6 +146,14 @@ function formatDataHora(iso: string): string {
 
 function nomeMes(m: number, a: number): string {
   return `${MESES_NOMES[m - 1]}/${String(a).slice(2)}`;
+}
+
+/** Formata data 'YYYY-MM-DD' como dd/mm/aaaa (sem hora). */
+function formatData(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('pt-BR');
 }
 
 function valorDoMes(valores: ValorMes[], mes: number, ano: number): number {
@@ -183,16 +192,15 @@ export function DREGerencial() {
   const [erroResumo, setErroResumo] = useState('');
   const [mostrarResumo, setMostrarResumo] = useState(false);
 
-  // Extrato
-  const [mesExtrato, setMesExtrato] = useState(new Date().getMonth() + 1);
-  const [anoExtrato, setAnoExtrato] = useState(anoAtual);
-  const [extrato, setExtrato] = useState<DadosExtrato | null>(null);
+  // Extrato (materializado no banco — base da DRE)
+  const [extratoSalvo, setExtratoSalvo] = useState<ExtratoSalvo | null>(null);
+  const [extratoMeta, setExtratoMeta] = useState<MetaExtrato | null>(null);
+  const [extratoDe, setExtratoDe] = useState('');
+  const [extratoAte, setExtratoAte] = useState('');
+  const [modalExtrato, setModalExtrato] = useState(false);
+  const [atualizandoExtrato, setAtualizandoExtrato] = useState(false);
   const [carregandoExtrato, setCarregandoExtrato] = useState(false);
   const [erroExtrato, setErroExtrato] = useState('');
-
-  // Histórico
-  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
-  const [carregandoHistorico, setCarregandoHistorico] = useState(false);
 
   // Configurações
   const [categorias, setCategorias] = useState<DreCategoria[]>([]);
@@ -258,48 +266,61 @@ export function DREGerencial() {
     }
   }
 
-  // ── Carregar extrato ───────────────────────────────────────────────────────
-  async function carregarExtrato() {
+  // ── Extrato salvo (base da DRE) ──────────────────────────────────────────────
+  const empresaExtrato = empresa === 'consolidado' ? 'ass' : empresa;
+
+  // Metadados (período disponível + atualização) — exibidos nas abas DRE e Extrato.
+  const carregarExtratoMeta = useCallback(async () => {
+    try {
+      const meta = await api<MetaExtrato | null>(`/api/financeiro/dre/extrato-meta/${empresa === 'consolidado' ? 'ass' : empresa}`);
+      setExtratoMeta(meta);
+    } catch {
+      setExtratoMeta(null);
+    }
+  }, [empresa]);
+
+  useEffect(() => { carregarExtratoMeta(); }, [carregarExtratoMeta]);
+
+  // Extrato salvo completo (itens + saldo) — carregado ao abrir a aba Extrato.
+  const carregarExtratoSalvo = useCallback(async () => {
     setCarregandoExtrato(true);
     setErroExtrato('');
     try {
-      const empresaExtrato = empresa === 'consolidado' ? 'ass' : empresa;
-      const ext = await api<DadosExtrato>(`/api/financeiro/dre/extrato/${empresaExtrato}/${mesExtrato}/${anoExtrato}`);
-      setExtrato(ext);
+      const emp = empresa === 'consolidado' ? 'ass' : empresa;
+      const ext = await api<ExtratoSalvo | null>(`/api/financeiro/dre/extrato/${emp}`);
+      setExtratoSalvo(ext);
+      if (ext) { setExtratoDe(ext.periodoDe); setExtratoAte(ext.periodoAte); }
     } catch (e) {
       setErroExtrato((e as Error).message);
-      setExtrato(null);
+      setExtratoSalvo(null);
     } finally {
       setCarregandoExtrato(false);
-    }
-  }
-
-  // ── Excluir snapshot ──────────────────────────────────────────────────────
-  async function excluirSnapshot(id: string) {
-    try {
-      await api(`/api/financeiro/dre/snapshots/${empresa}/${id}`, { method: 'DELETE' });
-      setSnapshots((prev) => prev.filter((s) => s.id !== id));
-    } catch (e) {
-      console.error('Erro ao excluir snapshot:', e);
-    }
-  }
-
-  // ── Carregar histórico ─────────────────────────────────────────────────────
-  const carregarHistorico = useCallback(async () => {
-    setCarregandoHistorico(true);
-    try {
-      const lista = await api<SnapshotInfo[]>(`/api/financeiro/dre/snapshots/${empresa}`);
-      setSnapshots(lista);
-    } catch {
-      setSnapshots([]);
-    } finally {
-      setCarregandoHistorico(false);
     }
   }, [empresa]);
 
   useEffect(() => {
-    if (aba === 'historico') carregarHistorico();
-  }, [aba, empresa, carregarHistorico]);
+    if (aba === 'extrato') carregarExtratoSalvo();
+  }, [aba, carregarExtratoSalvo]);
+
+  // Atualiza o extrato: busca o período no Conta Azul e salva no banco.
+  async function atualizarExtrato() {
+    if (!extratoDe || !extratoAte) { setErroExtrato('Informe o período inicial e final.'); return; }
+    setAtualizandoExtrato(true);
+    setErroExtrato('');
+    try {
+      const ext = await api<ExtratoSalvo>(`/api/financeiro/dre/extrato/${empresaExtrato}`, {
+        method: 'POST',
+        body: JSON.stringify({ de: extratoDe, ate: extratoAte }),
+      });
+      setExtratoSalvo(ext);
+      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm });
+      setModalExtrato(false);
+    } catch (e) {
+      setErroExtrato((e as Error).message);
+    } finally {
+      setAtualizandoExtrato(false);
+    }
+  }
 
   // ── Carregar configurações ─────────────────────────────────────────────────
   const carregarConfig = useCallback(async () => {
@@ -492,7 +513,6 @@ export function DREGerencial() {
         {([
           { id: 'dre', label: 'DRE' },
           { id: 'extrato', label: 'Extrato' },
-          { id: 'historico', label: 'Histórico' },
           { id: 'configuracoes', label: 'Configurações' },
         ] as { id: Aba; label: string }[]).map((a) => (
           <button
@@ -531,30 +551,27 @@ export function DREGerencial() {
           onFecharResumo={() => setMostrarResumo(false)}
           subtotais={subtotais}
           mappingsAlterados={mappingsAlterados}
+          extratoMeta={extratoMeta}
         />
       )}
 
       {/* ── ABA EXTRATO ────────────────────────────────────────────────────── */}
       {aba === 'extrato' && (
         <AbaExtrato
-          mes={mesExtrato}
-          ano={anoExtrato}
-          setMes={setMesExtrato}
-          setAno={setAnoExtrato}
-          extrato={extrato}
+          empresa={empresa}
+          extrato={extratoSalvo}
+          meta={extratoMeta}
           carregando={carregandoExtrato}
           erro={erroExtrato}
-          empresa={empresa}
-          onCarregar={carregarExtrato}
-        />
-      )}
-
-      {/* ── ABA HISTÓRICO ──────────────────────────────────────────────────── */}
-      {aba === 'historico' && (
-        <AbaHistorico
-          snapshots={snapshots}
-          carregando={carregandoHistorico}
-          onExcluir={excluirSnapshot}
+          modalAberto={modalExtrato}
+          de={extratoDe}
+          ate={extratoAte}
+          setDe={setExtratoDe}
+          setAte={setExtratoAte}
+          atualizando={atualizandoExtrato}
+          onAbrirModal={() => setModalExtrato(true)}
+          onFecharModal={() => setModalExtrato(false)}
+          onAtualizar={atualizarExtrato}
         />
       )}
 
@@ -600,13 +617,14 @@ interface AbaDREProps {
   onFecharResumo: () => void;
   subtotais: DreSubtotal[];
   mappingsAlterados: boolean;
+  extratoMeta: MetaExtrato | null;
 }
 
 function AbaDRE({
   mes, ano, setMes, setAno, snapshot, carregando, calculando, erro,
   expandidos, onToggle, onCalcular,
   resumo, carregandoResumo, erroResumo, mostrarResumo, onGerarResumo, onFecharResumo,
-  subtotais, mappingsAlterados,
+  subtotais, mappingsAlterados, extratoMeta,
 }: AbaDREProps) {
   const dados = snapshot?.dados ?? null;
   const meses = dados?.meses ?? [];
@@ -646,7 +664,21 @@ function AbaDRE({
         </button>
         {snapshot?.calculado_em && (
           <span className="text-xs text-gray-400 self-center">
-            Resultado de {formatDataHora(snapshot.calculado_em)}
+            DRE gerada em {formatDataHora(snapshot.calculado_em)}
+          </span>
+        )}
+      </div>
+
+      {/* Base de dados: extrato salvo no banco */}
+      <div className="mb-4 text-xs">
+        {extratoMeta ? (
+          <span className="text-gray-500">
+            Base: extrato de <strong>{formatData(extratoMeta.periodoDe)}</strong> a{' '}
+            <strong>{formatData(extratoMeta.periodoAte)}</strong> · atualizado em {formatDataHora(extratoMeta.atualizadoEm)}
+          </span>
+        ) : (
+          <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+            Nenhum extrato salvo. Vá na aba <strong>Extrato</strong>, atualize o período e volte — a DRE usa o extrato como base.
           </span>
         )}
       </div>
@@ -1138,54 +1170,63 @@ function LinhaDestaque({ nome, valores, meses, receitaBrutaTotal12, estilo }: {
 // ─── Aba Extrato ──────────────────────────────────────────────────────────────
 
 interface AbaExtratoProps {
-  mes: number; ano: number;
-  setMes: (m: number) => void; setAno: (a: number) => void;
-  extrato: DadosExtrato | null;
-  carregando: boolean; erro: string;
   empresa: EmpresaDRE;
-  onCarregar: () => void;
+  extrato: ExtratoSalvo | null;
+  meta: MetaExtrato | null;
+  carregando: boolean; erro: string;
+  modalAberto: boolean;
+  de: string; ate: string;
+  setDe: (v: string) => void; setAte: (v: string) => void;
+  atualizando: boolean;
+  onAbrirModal: () => void;
+  onFecharModal: () => void;
+  onAtualizar: () => void;
 }
 
-function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empresa, onCarregar }: AbaExtratoProps) {
+function AbaExtrato({
+  empresa, extrato, meta, carregando, erro, modalAberto,
+  de, ate, setDe, setAte, atualizando, onAbrirModal, onFecharModal, onAtualizar,
+}: AbaExtratoProps) {
   return (
     <div>
-      <div className="bg-white rounded-lg shadow p-4 mb-5 flex flex-wrap items-end gap-4">
+      <div className="bg-white rounded-lg shadow p-4 mb-5 flex flex-wrap items-center gap-4">
         {empresa === 'consolidado' && (
           <div className="w-full text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            Extrato disponível apenas por empresa. Mostrando Ambiência (ASS).
+            Extrato salvo por empresa. Mostrando Ambiência (ASS).
           </div>
         )}
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Mês</label>
-          <select value={mes} onChange={(e) => setMes(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
-            {MESES_COMPLETOS.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Ano</label>
-          <select value={ano} onChange={(e) => setAno(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
-            {ANOS.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
+        <div className="flex-1 min-w-0 text-sm">
+          {meta ? (
+            <div className="text-gray-600">
+              Período salvo: <strong>{formatData(meta.periodoDe)}</strong> a <strong>{formatData(meta.periodoAte)}</strong>
+              <span className="text-gray-400"> · atualizado em {formatDataHora(meta.atualizadoEm)}</span>
+            </div>
+          ) : (
+            <div className="text-gray-500">Nenhum extrato salvo ainda para esta empresa.</div>
+          )}
         </div>
         <button
-          onClick={onCarregar}
-          disabled={carregando}
-          className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium disabled:opacity-50 hover:bg-slate-700"
+          onClick={onAbrirModal}
+          className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium hover:bg-slate-700"
         >
-          {carregando ? 'Carregando...' : 'Carregar'}
+          Atualizar extrato
         </button>
       </div>
 
       {erro && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{erro}</div>}
 
-      {!extrato && !carregando && !erro && (
-        <div className="text-sm text-gray-400 py-8 text-center">Selecione o período e clique em Carregar.</div>
+      {carregando && <div className="text-sm text-gray-400 py-8 text-center">Carregando extrato...</div>}
+
+      {!carregando && !extrato && !erro && (
+        <div className="text-sm text-gray-400 py-8 text-center">
+          Nenhum extrato salvo. Clique em <strong>Atualizar extrato</strong> e selecione o período.
+        </div>
       )}
 
-      {extrato && (
+      {!carregando && extrato && (
         <div className="space-y-4">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="text-sm text-blue-600">Saldo Inicial</div>
+            <div className="text-sm text-blue-600">Saldo Inicial (base Conta Azul em {formatData(extrato.periodoDe)})</div>
             <div className="text-xl font-bold text-blue-800">{formatBRL(extrato.saldoInicial)}</div>
           </div>
 
@@ -1193,7 +1234,7 @@ function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empre
             <TabelaExtrato itens={extrato.itens} />
           ) : (
             <div className="text-sm text-gray-400 text-center py-6 bg-white rounded-lg shadow">
-              Nenhum lançamento encontrado para o período.
+              Nenhum lançamento no período salvo.
             </div>
           )}
 
@@ -1215,6 +1256,34 @@ function AbaExtrato({ mes, ano, setMes, setAno, extrato, carregando, erro, empre
           </div>
         </div>
       )}
+
+      {/* Modal de seleção de período */}
+      {modalAberto && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onFecharModal}>
+          <div className="bg-white rounded-lg shadow-xl p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-1">Atualizar extrato</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              O sistema busca todo o período no Conta Azul e substitui o extrato salvo. Essa tabela é a base da DRE.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Início</label>
+                <input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Fim</label>
+                <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={onFecharModal} disabled={atualizando} className="text-sm text-gray-500 px-3 py-2 hover:underline disabled:opacity-50">Cancelar</button>
+              <button onClick={onAtualizar} disabled={atualizando} className="bg-slate-800 text-white text-sm px-5 py-2 rounded font-medium hover:bg-slate-700 disabled:opacity-50">
+                {atualizando ? 'Buscando no Conta Azul...' : 'Atualizar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1231,24 +1300,31 @@ function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
               <th className="px-4 py-2 text-left">Categoria</th>
               <th className="px-4 py-2 text-right">Receita</th>
               <th className="px-4 py-2 text-right">Despesa</th>
+              <th className="px-4 py-2 text-right">Saldo</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {itens.map((item) => {
-              // Transferências: classifica pelo sinal do valor; receita/despesa usam o tipo direto.
-              const ehReceita = item.tipo === 'receita' || (item.tipo === 'transferencia' && item.valor >= 0);
+            {itens.map((item, idx) => {
+              const ehReceita = item.tipo === 'receita';
+              const ehDespesa = item.tipo === 'despesa';
               return (
-                <tr key={item.id} className="hover:bg-gray-50">
+                <tr key={item.id || idx} className="hover:bg-gray-50">
                   <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
                     {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
                   </td>
-                  <td className="px-4 py-2 text-gray-800">{item.descricao || '(sem descrição)'}</td>
+                  <td className="px-4 py-2 text-gray-800">
+                    {item.descricao || '(sem descrição)'}
+                    {item.tipo === 'transferencia' && <span className="ml-1 text-xs text-gray-400">(transferência)</span>}
+                  </td>
                   <td className="px-4 py-2 text-gray-500">{item.categoria}</td>
                   <td className="px-4 py-2 text-right text-green-700 font-medium">
                     {ehReceita ? formatBRL(Math.abs(item.valor)) : ''}
                   </td>
                   <td className="px-4 py-2 text-right text-red-600 font-medium">
-                    {!ehReceita ? formatBRL(Math.abs(item.valor)) : ''}
+                    {ehDespesa ? formatBRL(Math.abs(item.valor)) : ''}
+                  </td>
+                  <td className="px-4 py-2 text-right text-gray-700 whitespace-nowrap">
+                    {item.saldo !== undefined ? formatBRL(item.saldo) : ''}
                   </td>
                 </tr>
               );
@@ -1256,54 +1332,6 @@ function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-// ─── Aba Histórico ────────────────────────────────────────────────────────────
-
-interface AbaHistoricoProps {
-  snapshots: SnapshotInfo[];
-  carregando: boolean;
-  onExcluir: (id: string) => void;
-}
-
-function AbaHistorico({ snapshots, carregando, onExcluir }: AbaHistoricoProps) {
-  const [confirmando, setConfirmando] = useState<string | null>(null);
-
-  if (carregando) return <div className="text-sm text-gray-400 py-8 text-center">Carregando histórico...</div>;
-  if (snapshots.length === 0) return <div className="text-sm text-gray-400 py-8 text-center">Nenhum snapshot encontrado.</div>;
-
-  return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
-          <tr>
-            <th className="px-4 py-3 text-left">Data de atualização</th>
-            <th className="px-4 py-3 text-left">Mês / Ano ref.</th>
-            <th className="px-4 py-3 text-right">Ação</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {snapshots.map((s) => (
-            <tr key={s.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3 text-gray-600">{formatDataHora(s.calculado_em)}</td>
-              <td className="px-4 py-3 font-medium">{nomeMes(s.mes_ref, s.ano_ref)}</td>
-              <td className="px-4 py-3 text-right">
-                {confirmando === s.id ? (
-                  <span className="flex items-center justify-end gap-2">
-                    <span className="text-xs text-gray-500">Excluir?</span>
-                    <button onClick={() => { onExcluir(s.id); setConfirmando(null); }} className="text-xs text-red-600 font-medium hover:underline">Sim</button>
-                    <button onClick={() => setConfirmando(null)} className="text-xs text-gray-400 hover:underline">Não</button>
-                  </span>
-                ) : (
-                  <button onClick={() => setConfirmando(s.id)} className="text-xs text-gray-400 hover:text-red-500 transition-colors">Excluir</button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

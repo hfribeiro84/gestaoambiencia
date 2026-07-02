@@ -68,8 +68,9 @@ backend/
       pipedrive.ts, clockify.ts, claude.ts
       persistencia.ts            # salva/lê tokens em integracao_config
     modulos/financeiro/
-      dreCalculo.ts              # cálculo do DRE (lança+acumula+totais)
-      dreContaAzul.ts            # busca lançamentos, saldo, extrato via API CA
+      dreCalculo.ts              # cálculo do DRE (lê do extrato salvo, acumula, totais)
+      dreContaAzul.ts            # busca lançamentos, saldo, transferências via API CA
+      dreExtrato.ts              # gera/salva/lê o extrato materializado (base da DRE)
       dreTypes.ts                # tipos compartilhados do módulo DRE
     servicos/sincronizacao.ts, logSync.ts
     tipos/integracao.ts
@@ -97,6 +98,7 @@ supabase/migrations/
   0005_dre.sql                   # tabelas DRE (dre_categoria, dre_mapeamento, dre_snapshot)
   0006_nf_associacao_manual.sql  # associação manual NF ↔ NETR
   0007_dre_subtotais.sql         # tabela dre_subtotal (subtotais configuráveis)
+  0008_dre_extrato.sql           # tabelas dre_extrato + dre_extrato_item (base da DRE)
 ```
 
 ## Banco — tabelas
@@ -115,6 +117,8 @@ supabase/migrations/
 | `dre_snapshot`       | 0005 | Snapshots calculados do DRE (dados jsonb). |
 | `nf_associacao_manual`| 0006 | Associação manual NF ↔ unidade NETR. |
 | `dre_subtotal`       | 0007 | Subtotais configuráveis (= Resultado Op., etc.). |
+| `dre_extrato`        | 0008 | Metadados do extrato salvo por empresa (período, saldo inicial, atualização). |
+| `dre_extrato_item`   | 0008 | Lançamentos do extrato salvo (data, tipo, categoria, valor, saldo corrente). Base da DRE. |
 
 RLS habilitado em todas. `integracao_config` sem policy de usuário comum (protegida).
 
@@ -134,11 +138,13 @@ RLS habilitado em todas. `integracao_config` sem policy de usuário comum (prote
 | POST | `/mapeamento/:empresa` | Adiciona/atualiza mapeamento (upsert). |
 | DELETE | `/mapeamento/:empresa/:id` | Remove mapeamento. |
 | GET  | `/categorias-ca/:empresa` | Categorias distintas do CA nos últimos 12 meses. |
-| POST | `/calcular/:empresa/:mes/:ano` | Calcula DRE e salva snapshot. |
+| POST | `/calcular/:empresa/:mes/:ano` | Calcula DRE (lê do extrato salvo) e salva snapshot. |
 | GET  | `/ultimo/:empresa` | Último snapshot calculado. |
 | GET  | `/snapshots/:empresa` | Lista snapshots (id, mes_ref, ano_ref, calculado_em). |
 | DELETE | `/snapshots/:empresa/:id` | Exclui snapshot. |
-| GET  | `/extrato/:empresa/:mes/:ano` | Extrato mensal (ass/netr). |
+| POST | `/extrato/:empresa` | Busca período no CA (body `de`,`ate`), calcula saldo e **salva** o extrato (substitui). |
+| GET  | `/extrato/:empresa` | Extrato salvo (metadados + itens com saldo). |
+| GET  | `/extrato-meta/:empresa` | Só período disponível + data de atualização do extrato. |
 | GET  | `/resumo/:empresa` | Resumo executivo IA (Haiku) a partir do último snapshot. |
 | GET  | `/debug/raw/:empresa/:mes/:ano` | Resposta bruta da API CA (diagnóstico). |
 | GET  | `/debug/amostra/:empresa/:mes/:ano` | Amostra de lançamentos parseados. |
@@ -160,11 +166,18 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 
 ## Módulo DRE — arquitetura
 
+- **Extrato como base (0008):** o extrato materializado (`dre_extrato` +
+  `dre_extrato_item`) é a **fonte única** da DRE — o Conta Azul não é mais consultado a
+  cada cálculo. O usuário atualiza o extrato por período (modal início/fim na aba Extrato):
+  `POST /extrato/:empresa` busca tudo no CA, pega o saldo inicial na data inicial, calcula
+  o **saldo corrente** linha a linha e **substitui** o extrato salvo. As abas DRE e Extrato
+  mostram o período disponível e a data/hora de atualização. A aba Histórico foi removida.
 - **Cálculo:** regime de vencimento (parcelas entram no mês do `dataVencimento`).
-  A função `calcularDRE()` busca lançamentos do CA via API, acumula por categoria usando
-  `dre_mapeamento`, soma subcategorias para pais, calcula totais acumulados
-  (receitaLiquida, resultadoOperacional, resultadoLiquido, fluxoCaixaLivre) e salva
-  snapshot em `dre_snapshot`.
+  A função `calcularDRE()` lê os lançamentos do **extrato salvo** (`lerLancamentosDoExtrato`,
+  transferências ignoradas), acumula por categoria usando `dre_mapeamento`, soma
+  subcategorias para pais, calcula totais acumulados (receitaLiquida, resultadoOperacional,
+  resultadoLiquido, fluxoCaixaLivre) e salva snapshot em `dre_snapshot`. A DRE fica estática
+  na tela (carrega o último snapshot ao entrar) até o usuário clicar "Atualizar".
 - **Subtotais:** lidos de `dre_subtotal` no frontend. Cada subtotal tem `apos_tipo`
   (qual grupo de categorias antecede a linha) e `formula` (qual campo de
   `TotaisCalculados` mostrar). `TabelaDRE` os agrupa por `apos_tipo` e renderiza

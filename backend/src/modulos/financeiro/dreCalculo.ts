@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../../config/supabase';
-import { buscarLancamentosCA } from './dreContaAzul';
+import { lerLancamentosDoExtrato } from './dreExtrato';
 import type {
   EmpresaDRE,
   TipoCategoria,
@@ -270,7 +270,8 @@ export async function calcularDRE(
   const chaveMesesSet = new Set(meses.map(({ mes, ano }) => chave(mes, ano)));
 
   async function processarEmpresa(conta: 'ass' | 'netr', mapeamento: Map<string, string>) {
-    const lancamentos = await buscarLancamentosCA(conta, de, ate);
+    // Lê do extrato salvo no banco (não mais direto do Conta Azul).
+    const lancamentos = await lerLancamentosDoExtrato(conta, de, ate);
 
     for (const lanc of lancamentos) {
       const chaveMes = determinarMesLancamento(lanc);

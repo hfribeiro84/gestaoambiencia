@@ -5,7 +5,7 @@ import { autenticar } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { calcularDRE } from '../modulos/financeiro/dreCalculo';
 import { buscarLancamentosCA } from '../modulos/financeiro/dreContaAzul';
-import { gerarESalvarExtrato, lerExtratoSalvo, lerMetaExtrato } from '../modulos/financeiro/dreExtrato';
+import { gerarESalvarExtrato, atualizarExtratoRecente, lerExtratoSalvo, lerMetaExtrato } from '../modulos/financeiro/dreExtrato';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { criarCliente } from '../integracoes/claude';
 import type { EmpresaDRE, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
@@ -345,6 +345,29 @@ rotasDre.post('/financeiro/dre/extrato/:empresa', autenticar, async (req: Reques
 
     const saldo = typeof saldoInicial === 'number' ? saldoInicial : undefined;
     const extrato = await gerarESalvarExtrato(empresa, de, ate, saldo, { ignorarCache: reprocessar === true });
+    res.json(extrato);
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// POST /financeiro/dre/extrato/:empresa/recente
+// Atualização incremental: congela o histórico, refaz só os últimos meses +
+// futuro. Rápido; usado no dia a dia. Usa o período salvo.
+// ──────────────────────────────────────────────────────────────
+rotasDre.post('/financeiro/dre/extrato/:empresa/recente', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    if (empresa !== 'ass' && empresa !== 'netr') {
+      res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
+      return;
+    }
+    const extrato = await atualizarExtratoRecente(empresa);
+    if (!extrato) {
+      res.status(404).json({ erro: 'Nenhum extrato salvo. Faça primeiro o "Atualizar extrato" com o período.' });
+      return;
+    }
     res.json(extrato);
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });

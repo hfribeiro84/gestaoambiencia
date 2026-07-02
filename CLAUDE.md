@@ -146,7 +146,8 @@ RLS habilitado em todas. `integracao_config` sem policy de usuário comum (prote
 | GET  | `/ultimo/:empresa` | Último snapshot calculado. |
 | GET  | `/snapshots/:empresa` | Lista snapshots (id, mes_ref, ano_ref, calculado_em). |
 | DELETE | `/snapshots/:empresa/:id` | Exclui snapshot. |
-| POST | `/extrato/:empresa` | Busca período no CA (body `de`,`ate`), calcula saldo e **salva** o extrato (substitui). |
+| POST | `/extrato/:empresa` | Busca período no CA (body `de`,`ate`,`saldoInicial`,`reprocessar`), calcula saldo e **substitui** o extrato salvo (completo). |
+| POST | `/extrato/:empresa/recente` | Atualização incremental (últimos 2 meses + futuro), mantendo o histórico. |
 | GET  | `/extrato/:empresa` | Extrato salvo (metadados + itens com saldo). |
 | GET  | `/extrato-meta/:empresa` | Período disponível + data de atualização + resumo de atrasados. |
 | GET  | `/debug/parcelas/:empresa/:mes/:ano` | Schema cru de contas-a-receber (parcelas + baixas). |
@@ -185,9 +186,14 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
 - **Cache de baixas + cron noturno (0012):** `enriquecerComBaixas` guarda as baixas em
   `dre_baixa_cache` (chave empresa+parcela_id), invalidando por `data_alteracao` — só rebusca no
   CA o que mudou, deixando as atualizações seguintes rápidas. O botão "Reprocessar tudo" (ou
-  `reprocessar:true` no POST) ignora o cache e refaz do zero. Um cron às **04:00**
-  (`atualizarExtratosDiario`) reprocessa o período salvo de cada empresa — barato pelo cache — e
-  rola sozinho a fronteira caixa/previsto + entra novos pagamentos.
+  `reprocessar:true` no POST) ignora o cache e refaz do zero.
+- **Atualização incremental (recente x completo):** `montarEventos(empresa,de,ate)` é a lógica
+  comum (caixa+previsto). `gerarESalvarExtrato` faz o COMPLETO (substitui tudo — para (re)construir
+  ou estender o histórico / trocar saldo inicial; botão "Alterar período"). `atualizarExtratoRecente`
+  faz o INCREMENTAL: congela o histórico e refaz só os últimos `MESES_REFRESH_RECENTE` (=2) meses +
+  futuro, continuando o saldo a partir do último item congelado (`POST /extrato/:empresa/recente`;
+  botão "Atualizar recente"). O cron das **04:00** (`atualizarExtratosDiario`) usa o incremental —
+  rápido mesmo com histórico grande, rola a fronteira caixa/previsto e traz novos pagamentos.
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
   salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato

@@ -124,26 +124,23 @@ export async function calcularAtrasados(empresa: ContaCA): Promise<AtrasadosResu
 // Extrato de caixa
 // ──────────────────────────────────────────────────────────────
 
+// Janela recente reprocessada no "Atualizar recente" e no cron (o histórico
+// anterior fica congelado). Cobre pagamentos que atrasaram até ~2 meses.
+const MESES_REFRESH_RECENTE = 2;
+
+type EventoExtrato = { id: string; data: string; tipo: 'receita' | 'despesa'; descricao: string; categoria: string; valor: number; previsto: boolean };
+
 /**
- * Modelo HÍBRIDO: até ontem = CAIXA (baixas reais, por data de pagamento);
- * de hoje em diante = PREVISTO (parcelas em aberto, pela data de vencimento).
- * Calcula o saldo corrente (realizado + projeção) e SALVA no banco, substituindo
- * o extrato anterior. Também grava o snapshot de atrasados.
+ * Monta os eventos do recorte [de, ate] no modelo híbrido: até ontem = CAIXA
+ * (baixas reais, por data de pagamento); de hoje em diante = PREVISTO (parcelas
+ * em aberto, pela data de vencimento). Não persiste nada — só devolve os eventos.
  */
-export async function gerarESalvarExtrato(
-  empresa: ContaCA,
-  de: string,
-  ate: string,
-  saldoInicialManual?: number,
-  opts: { ignorarCache?: boolean } = {},
-): Promise<ExtratoSalvo> {
+async function montarEventos(empresa: ContaCA, de: string, ate: string, opts: { ignorarCache?: boolean } = {}): Promise<EventoExtrato[]> {
   const hoje = hojeISO();
   const ontem = addDias(hoje, -1);
   const caixaAte = ate < ontem ? ate : ontem; // realizado vai até ontem (ou fim, se antes)
   const prevDe = de > hoje ? de : hoje;        // previsto começa hoje (ou início, se depois)
-
-  type Evento = { id: string; data: string; tipo: 'receita' | 'despesa'; descricao: string; categoria: string; valor: number; previsto: boolean };
-  const eventos: Evento[] = [];
+  const eventos: EventoExtrato[] = [];
 
   // ── REALIZADO (caixa): baixas com data_pagamento em [de, caixaAte] ──
   if (de <= caixaAte) {
@@ -190,36 +187,12 @@ export async function gerarESalvarExtrato(
     }
   }
 
-  // Saldo inicial: usa o valor informado pelo usuário; se não vier, tenta o CA
-  // (que normalmente não devolve saldo de data arbitrária) e cai para 0.
-  const atrasados = await calcularAtrasados(empresa);
-  const saldoInicial = saldoInicialManual != null && !Number.isNaN(saldoInicialManual)
-    ? saldoInicialManual
-    : await buscarSaldoInicial(empresa, de);
-
   eventos.sort((a, b) => a.data.localeCompare(b.data));
+  return eventos;
+}
 
-  // Saldo corrente: parte do saldo inicial; recebimentos somam, pagamentos subtraem
-  // (realizado no passado, projeção no futuro).
-  let saldo = saldoInicial;
-  const itens: ItemExtratoSalvo[] = eventos.map((it) => {
-    saldo += it.tipo === 'receita' ? it.valor : -it.valor;
-    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo, previsto: it.previsto };
-  });
-
-  const totalReceitas = somaPorTipo(itens, 'receita');
-  const totalDespesas = somaPorTipo(itens, 'despesa');
-  const atualizadoEm = new Date().toISOString();
-
-  // Substitui o extrato anterior desta empresa.
-  await supabaseAdmin.from('dre_extrato_item').delete().eq('empresa', empresa);
-  const { error: eMeta } = await supabaseAdmin.from('dre_extrato').upsert(
-    { empresa, periodo_de: de, periodo_ate: ate, saldo_inicial: saldoInicial, atualizado_em: atualizadoEm, atrasados },
-    { onConflict: 'empresa' },
-  );
-  if (eMeta) throw new Error(`Falha ao salvar extrato: ${eMeta.message}`);
-
-  const rows = itens.map((i, idx) => ({
+function linhasParaInserir(empresa: ContaCA, itens: ItemExtratoSalvo[]) {
+  return itens.map((i, idx) => ({
     empresa,
     lancamento_id: i.id,
     data: i.data,
@@ -231,23 +204,112 @@ export async function gerarESalvarExtrato(
     ordem: idx,
     previsto: i.previsto ?? false,
   }));
+}
+
+async function inserirItens(rows: ReturnType<typeof linhasParaInserir>): Promise<void> {
   for (let k = 0; k < rows.length; k += 500) {
     const { error } = await supabaseAdmin.from('dre_extrato_item').insert(rows.slice(k, k + 500));
     if (error) throw new Error(`Falha ao salvar itens do extrato: ${error.message}`);
   }
+}
 
+/**
+ * Gera o extrato COMPLETO do período [de, ate] e SUBSTITUI o extrato salvo da
+ * empresa (apaga tudo e regrava). Usar para (re)construir/estender o histórico
+ * ou trocar o saldo inicial. Para o dia a dia, use `atualizarExtratoRecente`.
+ */
+export async function gerarESalvarExtrato(
+  empresa: ContaCA,
+  de: string,
+  ate: string,
+  saldoInicialManual?: number,
+  opts: { ignorarCache?: boolean } = {},
+): Promise<ExtratoSalvo> {
+  const eventos = await montarEventos(empresa, de, ate, opts);
+
+  // Saldo inicial: usa o valor informado; se não vier, tenta o CA (que normalmente
+  // não devolve saldo de data arbitrária) e cai para 0.
+  const atrasados = await calcularAtrasados(empresa);
+  const saldoInicial = saldoInicialManual != null && !Number.isNaN(saldoInicialManual)
+    ? saldoInicialManual
+    : await buscarSaldoInicial(empresa, de);
+
+  let saldo = saldoInicial;
+  const itens: ItemExtratoSalvo[] = eventos.map((it) => {
+    saldo += it.tipo === 'receita' ? it.valor : -it.valor;
+    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo, previsto: it.previsto };
+  });
+
+  const atualizadoEm = new Date().toISOString();
+
+  await supabaseAdmin.from('dre_extrato_item').delete().eq('empresa', empresa);
+  const { error: eMeta } = await supabaseAdmin.from('dre_extrato').upsert(
+    { empresa, periodo_de: de, periodo_ate: ate, saldo_inicial: saldoInicial, atualizado_em: atualizadoEm, atrasados },
+    { onConflict: 'empresa' },
+  );
+  if (eMeta) throw new Error(`Falha ao salvar extrato: ${eMeta.message}`);
+
+  await inserirItens(linhasParaInserir(empresa, itens));
+
+  const totalReceitas = somaPorTipo(itens, 'receita');
+  const totalDespesas = somaPorTipo(itens, 'despesa');
   return {
-    empresa,
-    periodoDe: de,
-    periodoAte: ate,
-    saldoInicial,
-    atualizadoEm,
-    itens,
-    totalReceitas,
-    totalDespesas,
-    saldoFinal: saldoInicial + totalReceitas - totalDespesas,
-    atrasados,
+    empresa, periodoDe: de, periodoAte: ate, saldoInicial, atualizadoEm, itens,
+    totalReceitas, totalDespesas,
+    saldoFinal: saldoInicial + totalReceitas - totalDespesas, atrasados,
   };
+}
+
+/**
+ * Atualização INCREMENTAL: congela o histórico e reprocessa só os últimos
+ * MESES_REFRESH_RECENTE meses + todo o futuro (previsto). Rápido e preserva o
+ * período completo salvo. O saldo continua a partir do último item congelado.
+ * É o que o dia a dia e o cron usam. Retorna null se não houver extrato salvo.
+ */
+export async function atualizarExtratoRecente(empresa: ContaCA, opts: { ignorarCache?: boolean } = {}): Promise<ExtratoSalvo | null> {
+  const cfg = await lerConfigExtrato(empresa);
+  if (!cfg) return null;
+
+  const hoje = hojeISO();
+  const limite = addMeses(hoje, -MESES_REFRESH_RECENTE);
+  const refreshDe = cfg.periodoDe > limite ? cfg.periodoDe : limite; // max(periodoDe, hoje-2m)
+  const ate = cfg.periodoAte;
+
+  // Se a janela recente cobre o período inteiro, faz o completo (mais simples).
+  if (refreshDe <= cfg.periodoDe) {
+    return gerarESalvarExtrato(empresa, cfg.periodoDe, cfg.periodoAte, cfg.saldoInicial, opts);
+  }
+
+  // Saldo base = saldo do último item congelado (data < refreshDe).
+  const { data: ultimoAntigo } = await supabaseAdmin
+    .from('dre_extrato_item')
+    .select('saldo')
+    .eq('empresa', empresa)
+    .lt('data', refreshDe)
+    .order('data', { ascending: false })
+    .order('ordem', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const saldoBase = ultimoAntigo ? Number(ultimoAntigo.saldo) : cfg.saldoInicial;
+
+  const eventos = await montarEventos(empresa, refreshDe, ate, opts);
+  let saldo = saldoBase;
+  const itens: ItemExtratoSalvo[] = eventos.map((it) => {
+    saldo += it.tipo === 'receita' ? it.valor : -it.valor;
+    return { id: it.id, data: it.data, tipo: it.tipo, descricao: it.descricao, categoria: it.categoria, valor: it.valor, saldo, previsto: it.previsto };
+  });
+
+  const atrasados = await calcularAtrasados(empresa);
+  const atualizadoEm = new Date().toISOString();
+
+  // Apaga só o recorte recente (data >= refreshDe) e reinsere; histórico intacto.
+  const { error: eDel } = await supabaseAdmin.from('dre_extrato_item').delete().eq('empresa', empresa).gte('data', refreshDe);
+  if (eDel) throw new Error(`Falha ao atualizar extrato: ${eDel.message}`);
+  await inserirItens(linhasParaInserir(empresa, itens));
+  await supabaseAdmin.from('dre_extrato').update({ atualizado_em: atualizadoEm, atrasados }).eq('empresa', empresa);
+
+  // Devolve o extrato completo (histórico congelado + recente atualizado).
+  return lerExtratoSalvo(empresa);
 }
 
 /** Lê o extrato salvo (metadados + itens com saldo + atrasados). */
@@ -314,20 +376,18 @@ export async function lerConfigExtrato(empresa: ContaCA): Promise<{ periodoDe: s
 }
 
 /**
- * Reprocessa o extrato salvo de cada empresa (mantendo o período e o saldo
- * inicial informado). Chamado pelo agendador noturno — com o cache de baixas,
- * só rebusca no CA o que mudou. Assim a fronteira caixa/previsto rola sozinha e
- * novos pagamentos entram automaticamente.
+ * Atualização INCREMENTAL noturna de cada empresa: congela o histórico e refaz
+ * só a janela recente + futuro (via `atualizarExtratoRecente`). Com o cache de
+ * baixas, fica barato mesmo com histórico grande. Rola a fronteira caixa/previsto
+ * e traz novos pagamentos automaticamente.
  */
 export async function atualizarExtratosDiario(): Promise<string> {
   const empresas: ContaCA[] = ['ass', 'netr'];
   const resultados: string[] = [];
   for (const emp of empresas) {
-    const cfg = await lerConfigExtrato(emp);
-    if (!cfg) { resultados.push(`${emp}: sem extrato salvo`); continue; }
     try {
-      await gerarESalvarExtrato(emp, cfg.periodoDe, cfg.periodoAte, cfg.saldoInicial);
-      resultados.push(`${emp}: ok (${cfg.periodoDe}..${cfg.periodoAte})`);
+      const ext = await atualizarExtratoRecente(emp);
+      resultados.push(ext ? `${emp}: ok (${ext.periodoDe}..${ext.periodoAte})` : `${emp}: sem extrato salvo`);
     } catch (e) {
       resultados.push(`${emp}: erro — ${(e as Error).message}`);
     }

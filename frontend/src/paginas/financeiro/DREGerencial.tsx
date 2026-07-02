@@ -355,6 +355,21 @@ export function DREGerencial() {
     atualizarExtrato(true);
   }
 
+  // Atualização incremental: congela o histórico, refaz só os últimos meses + futuro.
+  async function atualizarRecente() {
+    setAtualizandoExtrato(true);
+    setErroExtrato('');
+    try {
+      const ext = await api<ExtratoSalvo>(`/api/financeiro/dre/extrato/${empresaExtrato}/recente`, { method: 'POST' });
+      setExtratoSalvo(ext);
+      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm, atrasados: ext.atrasados });
+    } catch (e) {
+      setErroExtrato((e as Error).message);
+    } finally {
+      setAtualizandoExtrato(false);
+    }
+  }
+
   // ── Carregar configurações ─────────────────────────────────────────────────
   const carregarConfig = useCallback(async () => {
     setCarregandoConfig(true);
@@ -607,6 +622,7 @@ export function DREGerencial() {
           onAbrirModal={() => setModalExtrato(true)}
           onFecharModal={() => setModalExtrato(false)}
           onAtualizar={() => atualizarExtrato(false)}
+          onAtualizarRecente={atualizarRecente}
           onReprocessar={reprocessarExtrato}
         />
       )}
@@ -1283,12 +1299,13 @@ interface AbaExtratoProps {
   onAbrirModal: () => void;
   onFecharModal: () => void;
   onAtualizar: () => void;
+  onAtualizarRecente: () => void;
   onReprocessar: () => void;
 }
 
 function AbaExtrato({
   empresa, extrato, meta, carregando, erro, modalAberto,
-  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar, onReprocessar,
+  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, onAbrirModal, onFecharModal, onAtualizar, onAtualizarRecente, onReprocessar,
 }: AbaExtratoProps) {
   return (
     <div>
@@ -1303,6 +1320,9 @@ function AbaExtrato({
             <div className="text-gray-600">
               Período salvo: <strong>{formatData(meta.periodoDe)}</strong> a <strong>{formatData(meta.periodoAte)}</strong>
               <span className="text-gray-400"> · atualizado em {formatDataHora(meta.atualizadoEm)}</span>
+              <div className="text-[11px] text-gray-400 mt-0.5">
+                "Atualizar recente" refaz só os últimos 2 meses + o futuro (rápido, mantém o histórico) — também roda sozinho toda madrugada.
+              </div>
             </div>
           ) : (
             <div className="text-gray-500">Nenhum extrato salvo ainda para esta empresa.</div>
@@ -1313,7 +1333,7 @@ function AbaExtrato({
             <button
               onClick={onReprocessar}
               disabled={atualizando}
-              title="Refaz o extrato do zero, ignorando o cache de baixas"
+              title="Refaz o extrato inteiro do zero, ignorando o cache de baixas"
               className="text-gray-500 px-3 py-2 rounded text-sm hover:text-gray-700 disabled:opacity-50"
             >
               Reprocessar tudo
@@ -1321,10 +1341,22 @@ function AbaExtrato({
           )}
           <button
             onClick={onAbrirModal}
-            className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium hover:bg-slate-700"
+            disabled={atualizando}
+            title="Define/estende o período completo do extrato (substitui tudo)"
+            className={`px-4 py-2 rounded text-sm font-medium disabled:opacity-50 ${meta ? 'border border-slate-300 text-slate-700 hover:border-slate-500' : 'bg-slate-800 text-white hover:bg-slate-700'}`}
           >
-            Atualizar extrato
+            {meta ? 'Alterar período' : 'Atualizar extrato'}
           </button>
+          {meta && (
+            <button
+              onClick={onAtualizarRecente}
+              disabled={atualizando}
+              title="Atualiza só os últimos 2 meses + o futuro (rápido; mantém o histórico)"
+              className="bg-slate-800 text-white px-5 py-2 rounded text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+            >
+              {atualizando ? 'Atualizando...' : 'Atualizar recente'}
+            </button>
+          )}
         </div>
       </div>
 

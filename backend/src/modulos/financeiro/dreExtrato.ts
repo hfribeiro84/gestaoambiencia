@@ -264,9 +264,10 @@ export async function gerarESalvarExtrato(
  * Atualização INCREMENTAL: congela o histórico e reprocessa só os últimos
  * MESES_REFRESH_RECENTE meses + todo o futuro (previsto). Rápido e preserva o
  * período completo salvo. O saldo continua a partir do último item congelado.
- * É o que o dia a dia e o cron usam. Retorna null se não houver extrato salvo.
+ * É o que o dia a dia e o cron usam. Retorna metadados (leve) ou null se não
+ * houver extrato salvo — a tela recarrega os itens já filtrados à parte.
  */
-export async function atualizarExtratoRecente(empresa: ContaCA, opts: { ignorarCache?: boolean } = {}): Promise<ExtratoSalvo | null> {
+export async function atualizarExtratoRecente(empresa: ContaCA, opts: { ignorarCache?: boolean } = {}): Promise<MetaExtrato | null> {
   const cfg = await lerConfigExtrato(empresa);
   if (!cfg) return null;
 
@@ -277,7 +278,8 @@ export async function atualizarExtratoRecente(empresa: ContaCA, opts: { ignorarC
 
   // Se a janela recente cobre o período inteiro, faz o completo (mais simples).
   if (refreshDe <= cfg.periodoDe) {
-    return gerarESalvarExtrato(empresa, cfg.periodoDe, cfg.periodoAte, cfg.saldoInicial, opts);
+    const full = await gerarESalvarExtrato(empresa, cfg.periodoDe, cfg.periodoAte, cfg.saldoInicial, opts);
+    return { periodoDe: full.periodoDe, periodoAte: full.periodoAte, atualizadoEm: full.atualizadoEm, atrasados: full.atrasados ?? null };
   }
 
   // Saldo base = saldo do último item congelado (data < refreshDe).
@@ -308,8 +310,8 @@ export async function atualizarExtratoRecente(empresa: ContaCA, opts: { ignorarC
   await inserirItens(linhasParaInserir(empresa, itens));
   await supabaseAdmin.from('dre_extrato').update({ atualizado_em: atualizadoEm, atrasados }).eq('empresa', empresa);
 
-  // Devolve o extrato completo (histórico congelado + recente atualizado).
-  return lerExtratoSalvo(empresa);
+  // Devolve só os metadados; a tela recarrega os itens filtrados.
+  return { periodoDe: cfg.periodoDe, periodoAte: cfg.periodoAte, atualizadoEm, atrasados };
 }
 
 /** Lê o extrato salvo (metadados + itens com saldo + atrasados). */
@@ -358,6 +360,75 @@ export async function lerExtratoSalvo(empresa: ContaCA): Promise<ExtratoSalvo | 
     saldoFinal: saldoInicial + totalReceitas - totalDespesas,
     atrasados: (meta.atrasados as AtrasadosResumo | null) ?? null,
   };
+}
+
+export interface FiltroExtrato { de?: string; ate?: string; categoria?: string; busca?: string }
+
+/**
+ * Lê o extrato aplicando filtros (data, categoria, descrição) no banco. Retorna
+ * só o recorte — essencial com histórico grande (não traz milhares de linhas à
+ * toa). O `saldo` de cada item é absoluto (acumulado desde o saldo inicial), então
+ * qualquer recorte mostra saldos corretos; `saldoFinal` = saldo do último item do
+ * recorte; totais = somas do recorte.
+ */
+export async function lerExtratoFiltrado(empresa: ContaCA, filtro: FiltroExtrato): Promise<ExtratoSalvo | null> {
+  const { data: meta } = await supabaseAdmin
+    .from('dre_extrato')
+    .select('*')
+    .eq('empresa', empresa)
+    .maybeSingle();
+  if (!meta) return null;
+
+  const itensDb = await selecionarTudoPaginado<Record<string, unknown>>((rDe, rAte) => {
+    let q = supabaseAdmin
+      .from('dre_extrato_item')
+      .select('lancamento_id, data, tipo, descricao, categoria, valor, saldo, previsto')
+      .eq('empresa', empresa);
+    if (filtro.de) q = q.gte('data', filtro.de);
+    if (filtro.ate) q = q.lte('data', filtro.ate);
+    if (filtro.categoria) q = q.eq('categoria', filtro.categoria);
+    if (filtro.busca) q = q.ilike('descricao', `%${filtro.busca}%`);
+    return q.order('data').order('ordem').range(rDe, rAte);
+  });
+
+  const itens: ItemExtratoSalvo[] = itensDb.map((r: Record<string, unknown>) => ({
+    id: (r.lancamento_id as string) ?? '',
+    data: r.data as string,
+    tipo: r.tipo as ItemExtratoSalvo['tipo'],
+    descricao: (r.descricao as string) ?? '',
+    categoria: (r.categoria as string) ?? '',
+    valor: Number(r.valor),
+    saldo: Number(r.saldo),
+    previsto: Boolean(r.previsto),
+  }));
+
+  const saldoInicial = Number(meta.saldo_inicial);
+  const totalReceitas = somaPorTipo(itens, 'receita');
+  const totalDespesas = somaPorTipo(itens, 'despesa');
+  const saldoFinal = itens.length > 0 ? itens[itens.length - 1].saldo : saldoInicial;
+
+  return {
+    empresa,
+    periodoDe: meta.periodo_de as string,
+    periodoAte: meta.periodo_ate as string,
+    saldoInicial,
+    atualizadoEm: meta.atualizado_em as string,
+    itens,
+    totalReceitas,
+    totalDespesas,
+    saldoFinal,
+    atrasados: (meta.atrasados as AtrasadosResumo | null) ?? null,
+  };
+}
+
+/** Lista as categorias distintas presentes no extrato (para o filtro). */
+export async function lerCategoriasExtrato(empresa: ContaCA): Promise<string[]> {
+  const rows = await selecionarTudoPaginado<{ categoria: string | null }>((rDe, rAte) =>
+    supabaseAdmin.from('dre_extrato_item').select('categoria').eq('empresa', empresa).range(rDe, rAte),
+  );
+  const set = new Set<string>();
+  for (const r of rows) if (r.categoria) set.add(r.categoria);
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 /** Lê a configuração do extrato salvo (período + saldo inicial) — usada pelo cron. */

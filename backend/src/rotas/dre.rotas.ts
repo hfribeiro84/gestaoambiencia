@@ -5,7 +5,7 @@ import { autenticar } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { calcularDRE } from '../modulos/financeiro/dreCalculo';
 import { buscarLancamentosCA } from '../modulos/financeiro/dreContaAzul';
-import { gerarESalvarExtrato, atualizarExtratoRecente, lerExtratoSalvo, lerMetaExtrato } from '../modulos/financeiro/dreExtrato';
+import { gerarESalvarExtrato, atualizarExtratoRecente, lerExtratoFiltrado, lerCategoriasExtrato, lerMetaExtrato } from '../modulos/financeiro/dreExtrato';
 import { chamadaApi } from '../integracoes/contaAzul';
 import { criarCliente } from '../integracoes/claude';
 import type { EmpresaDRE, CategoriaCA, TipoCategoria } from '../modulos/financeiro/dreTypes';
@@ -393,7 +393,8 @@ rotasDre.post('/financeiro/dre/extrato/:empresa/recente', autenticar, async (req
 });
 
 // ──────────────────────────────────────────────────────────────
-// GET /financeiro/dre/extrato/:empresa  — extrato salvo (metadados + itens)
+// GET /financeiro/dre/extrato/:empresa  — extrato salvo (filtrado)
+// Query opcional: de, ate, categoria, busca. Retorna só o recorte.
 // ──────────────────────────────────────────────────────────────
 rotasDre.get('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request, res: Response) => {
   try {
@@ -402,7 +403,29 @@ rotasDre.get('/financeiro/dre/extrato/:empresa', autenticar, async (req: Request
       res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
       return;
     }
-    res.json(await lerExtratoSalvo(empresa));
+    const filtro = {
+      de: (req.query.de as string) || undefined,
+      ate: (req.query.ate as string) || undefined,
+      categoria: (req.query.categoria as string) || undefined,
+      busca: (req.query.busca as string) || undefined,
+    };
+    res.json(await lerExtratoFiltrado(empresa, filtro));
+  } catch (e) {
+    res.status(500).json({ erro: (e as Error).message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /financeiro/dre/extrato/:empresa/categorias  — categorias do extrato
+// ──────────────────────────────────────────────────────────────
+rotasDre.get('/financeiro/dre/extrato/:empresa/categorias', autenticar, async (req: Request, res: Response) => {
+  try {
+    const { empresa } = req.params;
+    if (empresa !== 'ass' && empresa !== 'netr') {
+      res.status(400).json({ erro: 'Use ass ou netr para o extrato.' });
+      return;
+    }
+    res.json(await lerCategoriasExtrato(empresa));
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

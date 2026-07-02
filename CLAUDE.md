@@ -149,7 +149,8 @@ RLS habilitado em todas. `integracao_config` sem policy de usuário comum (prote
 | POST | `/extrato/:empresa` | Rebuild COMPLETO em **background** (body `de`,`ate`,`saldoInicial`,`reprocessar`); responde 202. |
 | GET  | `/extrato/:empresa/status` | Status do rebuild em background (processando/ok/erro/ocioso). |
 | POST | `/extrato/:empresa/recente` | Atualização incremental (últimos 2 meses + futuro), mantendo o histórico. |
-| GET  | `/extrato/:empresa` | Extrato salvo (metadados + itens com saldo). |
+| GET  | `/extrato/:empresa` | Extrato salvo FILTRADO (query `de`,`ate`,`categoria`,`busca`) — só o recorte. |
+| GET  | `/extrato/:empresa/categorias` | Categorias distintas do extrato (para o filtro). |
 | GET  | `/extrato-meta/:empresa` | Período disponível + data de atualização + resumo de atrasados. |
 | GET  | `/debug/parcelas/:empresa/:mes/:ano` | Schema cru de contas-a-receber (parcelas + baixas). |
 | GET  | `/resumo/:empresa` | Resumo executivo IA (Haiku) a partir do último snapshot. |
@@ -199,6 +200,14 @@ Provedores: `conta_azul_ass`, `conta_azul_netr`, `pipedrive`, `clockify`,
   estourava o timeout da borda (erro "Failed to fetch"). Agora roda em **background** (mapa
   `jobsExtrato` em memória): responde 202 e o frontend consulta `/extrato/:empresa/status`
   (processando/ok/erro) até terminar. O incremental e o cron continuam síncronos (rápidos).
+- **Filtro na aba Extrato (histórico grande):** `lerExtratoFiltrado` busca só o recorte
+  (query `de`,`ate`,`categoria`,`busca` — `ilike` na descrição) via `.range()` paginado; o
+  `saldo` de cada item é absoluto, então qualquer recorte mostra saldos corretos (`saldoFinal`
+  = saldo do último item do recorte; totais = somas do recorte). Assim a tela não carrega
+  dezenas de milhares de linhas de uma vez (extrato pode ter ~10 anos). Frontend: barra de
+  filtro (default últimos 90 dias + futuro), dropdown de categorias (`/extrato/:empresa/categorias`),
+  busca por descrição; coluna Data agora com ano (dd/mm/aa). `atualizarExtratoRecente` e o
+  POST `/recente` passaram a devolver só metadados (leve) — a tela recarrega os itens filtrados.
 - **Contas em atraso:** `calcularAtrasados()` levanta as parcelas vencidas e ainda em aberto
   (`valorTotal − totalBaixado > 0` e `dataVencimento < hoje`), a receber e a pagar. Snapshot
   salvo em `dre_extrato.atrasados` na atualização do extrato; exibido nas abas DRE e Extrato

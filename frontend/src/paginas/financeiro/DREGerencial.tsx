@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type JSX } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import { api } from '../../lib/api';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -222,6 +222,14 @@ export function DREGerencial() {
   const [processandoExtrato, setProcessandoExtrato] = useState(false);
   const [carregandoExtrato, setCarregandoExtrato] = useState(false);
   const [erroExtrato, setErroExtrato] = useState('');
+  // Filtro da aba Extrato (só o recorte é buscado no banco — essencial c/ histórico grande).
+  const [filtroExtrato, setFiltroExtrato] = useState<{ de: string; ate: string; categoria: string; busca: string }>(() => {
+    const d = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    return { de: d, ate: '', categoria: '', busca: '' };
+  });
+  const filtroExtratoRef = useRef(filtroExtrato);
+  filtroExtratoRef.current = filtroExtrato;
+  const [categoriasExtrato, setCategoriasExtrato] = useState<string[]>([]);
 
   // Configurações
   const [categorias, setCategorias] = useState<DreCategoria[]>([]);
@@ -302,13 +310,21 @@ export function DREGerencial() {
 
   useEffect(() => { carregarExtratoMeta(); }, [carregarExtratoMeta]);
 
-  // Extrato salvo completo (itens + saldo) — carregado ao abrir a aba Extrato.
+  // Extrato salvo (só o recorte filtrado) — carregado ao abrir a aba Extrato e
+  // ao aplicar filtro. Lê o filtro via ref para não recriar a cada tecla digitada.
   const carregarExtratoSalvo = useCallback(async () => {
     setCarregandoExtrato(true);
     setErroExtrato('');
     try {
       const emp = empresa === 'consolidado' ? 'ass' : empresa;
-      const ext = await api<ExtratoSalvo | null>(`/api/financeiro/dre/extrato/${emp}`);
+      const f = filtroExtratoRef.current;
+      const qs = new URLSearchParams();
+      if (f.de) qs.set('de', f.de);
+      if (f.ate) qs.set('ate', f.ate);
+      if (f.categoria) qs.set('categoria', f.categoria);
+      if (f.busca) qs.set('busca', f.busca);
+      const sufixo = qs.toString() ? `?${qs.toString()}` : '';
+      const ext = await api<ExtratoSalvo | null>(`/api/financeiro/dre/extrato/${emp}${sufixo}`);
       setExtratoSalvo(ext);
       if (ext) { setExtratoDe(ext.periodoDe); setExtratoAte(ext.periodoAte); setExtratoSaldoInicial(String(ext.saldoInicial ?? 0)); }
     } catch (e) {
@@ -319,9 +335,26 @@ export function DREGerencial() {
     }
   }, [empresa]);
 
+  const carregarCategoriasExtrato = useCallback(async () => {
+    try {
+      const emp = empresa === 'consolidado' ? 'ass' : empresa;
+      const cats = await api<string[]>(`/api/financeiro/dre/extrato/${emp}/categorias`);
+      setCategoriasExtrato(cats);
+    } catch {
+      setCategoriasExtrato([]);
+    }
+  }, [empresa]);
+
   useEffect(() => {
-    if (aba === 'extrato') carregarExtratoSalvo();
-  }, [aba, carregarExtratoSalvo]);
+    if (aba === 'extrato') { carregarExtratoSalvo(); carregarCategoriasExtrato(); }
+  }, [aba, carregarExtratoSalvo, carregarCategoriasExtrato]);
+
+  function limparFiltroExtrato() {
+    const d = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    setFiltroExtrato({ de: d, ate: '', categoria: '', busca: '' });
+    filtroExtratoRef.current = { de: d, ate: '', categoria: '', busca: '' };
+    carregarExtratoSalvo();
+  }
 
   // Rebuild COMPLETO: roda em background no servidor (pode levar minutos).
   // Dispara e acompanha o status até terminar. `reprocessar` ignora o cache.
@@ -361,6 +394,7 @@ export function DREGerencial() {
         if (s.estado === 'ok') {
           await carregarExtratoSalvo();
           await carregarExtratoMeta();
+          await carregarCategoriasExtrato();
           setProcessandoExtrato(false);
           setAtualizandoExtrato(false);
           return;
@@ -391,9 +425,10 @@ export function DREGerencial() {
     setAtualizandoExtrato(true);
     setErroExtrato('');
     try {
-      const ext = await api<ExtratoSalvo>(`/api/financeiro/dre/extrato/${empresaExtrato}/recente`, { method: 'POST' });
-      setExtratoSalvo(ext);
-      setExtratoMeta({ periodoDe: ext.periodoDe, periodoAte: ext.periodoAte, atualizadoEm: ext.atualizadoEm, atrasados: ext.atrasados });
+      const meta = await api<MetaExtrato>(`/api/financeiro/dre/extrato/${empresaExtrato}/recente`, { method: 'POST' });
+      setExtratoMeta(meta);
+      await carregarExtratoSalvo();
+      await carregarCategoriasExtrato();
     } catch (e) {
       setErroExtrato((e as Error).message);
     } finally {
@@ -651,6 +686,11 @@ export function DREGerencial() {
           setSaldoInicial={setExtratoSaldoInicial}
           atualizando={atualizandoExtrato}
           processando={processandoExtrato}
+          filtro={filtroExtrato}
+          categorias={categoriasExtrato}
+          onFiltro={(patch) => setFiltroExtrato((f) => ({ ...f, ...patch }))}
+          onAplicarFiltro={() => carregarExtratoSalvo()}
+          onLimparFiltro={limparFiltroExtrato}
           onAbrirModal={() => setModalExtrato(true)}
           onFecharModal={() => setModalExtrato(false)}
           onAtualizar={() => atualizarExtrato(false)}
@@ -1329,6 +1369,11 @@ interface AbaExtratoProps {
   saldoInicial: string; setSaldoInicial: (v: string) => void;
   atualizando: boolean;
   processando: boolean;
+  filtro: { de: string; ate: string; categoria: string; busca: string };
+  categorias: string[];
+  onFiltro: (patch: Partial<{ de: string; ate: string; categoria: string; busca: string }>) => void;
+  onAplicarFiltro: () => void;
+  onLimparFiltro: () => void;
   onAbrirModal: () => void;
   onFecharModal: () => void;
   onAtualizar: () => void;
@@ -1338,7 +1383,9 @@ interface AbaExtratoProps {
 
 function AbaExtrato({
   empresa, extrato, meta, carregando, erro, modalAberto,
-  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, processando, onAbrirModal, onFecharModal, onAtualizar, onAtualizarRecente, onReprocessar,
+  de, ate, setDe, setAte, saldoInicial, setSaldoInicial, atualizando, processando,
+  filtro, categorias, onFiltro, onAplicarFiltro, onLimparFiltro,
+  onAbrirModal, onFecharModal, onAtualizar, onAtualizarRecente, onReprocessar,
 }: AbaExtratoProps) {
   return (
     <div>
@@ -1402,6 +1449,42 @@ function AbaExtrato({
 
       <PainelAtrasados atrasados={meta?.atrasados} />
 
+      {meta && (
+        <div className="bg-white rounded-lg shadow p-3 mb-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[11px] text-gray-500 mb-1">De</label>
+            <input type="date" value={filtro.de} onChange={(e) => onFiltro({ de: e.target.value })} className="border rounded px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-[11px] text-gray-500 mb-1">Até</label>
+            <input type="date" value={filtro.ate} onChange={(e) => onFiltro({ ate: e.target.value })} className="border rounded px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-[11px] text-gray-500 mb-1">Categoria</label>
+            <select value={filtro.categoria} onChange={(e) => onFiltro({ categoria: e.target.value })} className="border rounded px-2 py-1.5 text-sm max-w-[220px]">
+              <option value="">Todas</option>
+              {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-[11px] text-gray-500 mb-1">Descrição contém</label>
+            <input
+              type="text" value={filtro.busca}
+              onChange={(e) => onFiltro({ busca: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') onAplicarFiltro(); }}
+              placeholder="buscar na descrição..."
+              className="w-full border rounded px-2 py-1.5 text-sm"
+            />
+          </div>
+          <button onClick={onAplicarFiltro} disabled={carregando} className="bg-slate-800 text-white px-4 py-1.5 rounded text-sm font-medium hover:bg-slate-700 disabled:opacity-50">
+            Aplicar
+          </button>
+          <button onClick={onLimparFiltro} disabled={carregando} className="text-gray-500 px-2 py-1.5 rounded text-sm hover:text-gray-700 disabled:opacity-50">
+            Limpar
+          </button>
+        </div>
+      )}
+
       {erro && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{erro}</div>}
 
       {carregando && <div className="text-sm text-gray-400 py-8 text-center">Carregando extrato...</div>}
@@ -1425,24 +1508,27 @@ function AbaExtrato({
           </div>
 
           {extrato.itens.length > 0 ? (
-            <TabelaExtrato itens={extrato.itens} />
+            <>
+              <div className="text-xs text-gray-400">{extrato.itens.length} lançamento(s) no recorte filtrado</div>
+              <TabelaExtrato itens={extrato.itens} />
+            </>
           ) : (
             <div className="text-sm text-gray-400 text-center py-6 bg-white rounded-lg shadow">
-              Nenhum lançamento no período salvo.
+              Nenhum lançamento para o filtro selecionado.
             </div>
           )}
 
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-green-50 rounded-lg p-4">
-              <div className="text-sm text-green-600">Total Receitas</div>
+              <div className="text-sm text-green-600">Total Receitas (filtro)</div>
               <div className="text-lg font-bold text-green-700">{formatBRL(extrato.totalReceitas)}</div>
             </div>
             <div className="bg-red-50 rounded-lg p-4">
-              <div className="text-sm text-red-600">Total Despesas</div>
+              <div className="text-sm text-red-600">Total Despesas (filtro)</div>
               <div className="text-lg font-bold text-red-700">{formatBRL(extrato.totalDespesas)}</div>
             </div>
             <div className={`rounded-lg p-4 ${extrato.saldoFinal >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-              <div className={`text-sm ${extrato.saldoFinal >= 0 ? 'text-green-600' : 'text-red-600'}`}>Saldo Final</div>
+              <div className={`text-sm ${extrato.saldoFinal >= 0 ? 'text-green-600' : 'text-red-600'}`}>Saldo acumulado (fim do recorte)</div>
               <div className={`text-lg font-bold ${extrato.saldoFinal >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                 {formatBRL(extrato.saldoFinal)}
               </div>
@@ -1501,7 +1587,7 @@ function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
             <tr>
-              <th className="px-4 py-2 text-left w-20">Data</th>
+              <th className="px-4 py-2 text-left w-24">Data</th>
               <th className="px-4 py-2 text-left">Descrição</th>
               <th className="px-4 py-2 text-left">Categoria</th>
               <th className="px-4 py-2 text-right">Receita</th>
@@ -1517,7 +1603,7 @@ function TabelaExtrato({ itens }: { itens: ItemExtrato[] }) {
               return (
                 <tr key={item.id || idx} className={prev ? 'bg-blue-50/40 hover:bg-blue-50 italic' : 'hover:bg-gray-50'}>
                   <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
-                    {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'}
+                    {item.data ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}
                   </td>
                   <td className={`px-4 py-2 ${prev ? 'text-gray-500' : 'text-gray-800'}`}>
                     {item.descricao || '(sem descrição)'}

@@ -192,9 +192,11 @@ export async function buscarLancamentosExtrato(
 /** Busca o saldo inicial das contas financeiras em uma data. */
 export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promise<number> {
   try {
+    // O endpoint exige data-HORA em ISO 8601 (não aceita só a data).
+    const dia = data.slice(0, 10);
     const resp = await chamadaApi(empresa, '/v1/financeiro/eventos-financeiros/saldo-inicial', {
-      data_inicio: data,
-      data_fim: data,
+      data_inicio: `${dia}T00:00:00`,
+      data_fim: `${dia}T23:59:59`,
     });
     if (!resp.ok) return 0;
     const json = (await resp.json()) as Record<string, unknown>;
@@ -203,7 +205,7 @@ export async function buscarSaldoInicial(empresa: ContaCA, data: string): Promis
     if (itens.length > 0) {
       return itens.reduce((acc, it) => acc + ((it.saldo_inicial ?? it.saldo ?? it.valor ?? 0) as number), 0);
     }
-    return (json.saldo ?? json.valor ?? 0) as number;
+    return (json.saldo ?? json.saldo_inicial ?? json.valor ?? 0) as number;
   } catch {
     return 0;
   }

@@ -694,47 +694,39 @@ rotasDre.get('/financeiro/dre/debug/extrato-diag/:empresa', async (req: Request,
     const [y, m, d] = hoje.split('-').map(Number);
     const mais18 = new Date(Date.UTC(y, m - 1 + 18, d)).toISOString().slice(0, 10);
 
-    // (1) Saldo inicial — sonda candidatos e mostra a resposta crua.
-    const saldoCand: Array<{ ep: string; params: Record<string, string> }> = [
-      { ep: '/v1/financeiro/eventos-financeiros/saldo-inicial', params: { data_inicio: hoje, data_fim: hoje } },
-      { ep: '/v1/financeiro/contas-financeiras', params: {} },
-      { ep: '/v1/financeiro/saldo', params: { data: hoje } },
-    ];
-    const saldos: Record<string, unknown>[] = [];
-    for (const c of saldoCand) {
+    // (1) Saldo inicial — agora com data-HORA (ISO 8601), pra ver a resposta crua.
+    let saldo: Record<string, unknown>;
+    try {
+      const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/saldo-inicial', {
+        data_inicio: `${hoje}T00:00:00`, data_fim: `${hoje}T23:59:59`,
+      });
+      const t = await r.text();
+      let corpo: unknown;
+      try { corpo = JSON.parse(t); } catch { corpo = t.slice(0, 400); }
+      saldo = { status: r.status, corpo };
+    } catch (e) {
+      saldo = { erro: (e as Error).message };
+    }
+
+    // (2) Parcelas a pagar futuras — pagina 4 vezes p/ ver se o vencimento avança.
+    const paginas: Record<string, unknown>[] = [];
+    for (let pagina = 1; pagina <= 4; pagina++) {
       try {
-        const r = await chamadaApi(conta, c.ep, c.params);
-        const t = await r.text();
-        let corpo: unknown;
-        try { corpo = JSON.parse(t); } catch { corpo = t.slice(0, 300); }
-        saldos.push({ ep: c.ep, status: r.status, corpo });
+        const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar', {
+          data_vencimento_de: hoje, data_vencimento_ate: mais18, pagina: String(pagina), tamanho_pagina: '200',
+        });
+        const b = JSON.parse(await r.text()) as { itens?: Record<string, unknown>[]; itens_totais?: number };
+        const itens = b.itens ?? [];
+        const vencs = itens.map((i) => String(i.data_vencimento ?? '')).filter(Boolean).sort();
+        paginas.push({ pagina, itens_totais: b.itens_totais, qtd: itens.length, vencMin: vencs[0] ?? null, vencMax: vencs[vencs.length - 1] ?? null });
+        if (itens.length < 200) break;
       } catch (e) {
-        saldos.push({ ep: c.ep, erro: (e as Error).message });
+        paginas.push({ pagina, erro: (e as Error).message });
+        break;
       }
     }
 
-    // (2) Parcelas a pagar com vencimento de hoje até +18 meses.
-    let futuras: Record<string, unknown>;
-    try {
-      const r = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar', {
-        data_vencimento_de: hoje, data_vencimento_ate: mais18, pagina: '1', tamanho_pagina: '200',
-      });
-      const b = JSON.parse(await r.text()) as { itens?: Record<string, unknown>[]; itens_totais?: number };
-      const itens = b.itens ?? [];
-      const vencs = itens.map((i) => String(i.data_vencimento ?? '')).filter(Boolean).sort();
-      futuras = {
-        status: r.status,
-        itens_totais: b.itens_totais,
-        qtdRetornada: itens.length,
-        vencMin: vencs[0] ?? null,
-        vencMax: vencs[vencs.length - 1] ?? null,
-        amostra: itens.slice(0, 3).map((i) => ({ desc: i.descricao, venc: i.data_vencimento, status: i.status_traduzido, pago: i.pago, total: i.total })),
-      };
-    } catch (e) {
-      futuras = { erro: (e as Error).message };
-    }
-
-    res.json({ empresa, hoje, mais18, saldos, futuras });
+    res.json({ empresa, hoje, mais18, saldo, paginas });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }

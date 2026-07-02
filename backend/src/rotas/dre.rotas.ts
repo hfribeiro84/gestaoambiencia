@@ -696,43 +696,53 @@ rotasDre.get('/financeiro/dre/debug/parcelas/:empresa/:mes/:ano', async (req: Re
     const de = primeiroDia(mes, ano);
     const ate = ultimoDia(mes, ano);
 
-    // Sonda vários caminhos candidatos para descobrir qual devolve parcelas e
-    // onde estão as baixas (data de pagamento).
-    const candidatos = [
-      '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar',
-      '/v1/financeiro/contas-a-receber',
-      '/v1/financeiro/eventos-financeiros/contas-a-receber',
-    ];
+    // 1) Pega uma parcela paga do endpoint que já funciona.
+    const rP = await chamadaApi(conta, '/v1/financeiro/eventos-financeiros/contas-a-receber/buscar', {
+      data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '50',
+    });
+    const corpoP = JSON.parse(await rP.text()) as { itens?: Record<string, unknown>[] };
+    const itens = corpoP.itens ?? [];
+    const paga = itens.find((i) => Number(i.pago) > 0) ?? itens[0];
+    const pid = paga ? String(paga.id) : null;
 
-    const resultados = [] as Record<string, unknown>[];
-    for (const endpoint of candidatos) {
+    // 2) Sonda os caminhos de baixa dessa parcela para achar data de pagamento.
+    const candidatosBaixa = pid ? [
+      `/v1/financeiro/eventos-financeiros/parcelas/${pid}/baixa`,
+      `/v1/financeiro/eventos-financeiros/parcelas/${pid}/baixas`,
+      `/v1/financeiro/eventos-financeiros/parcelas/${pid}`,
+    ] : [];
+
+    const baixas = [] as Record<string, unknown>[];
+    for (const endpoint of candidatosBaixa) {
       try {
-        const r = await chamadaApi(conta, endpoint, {
-          data_vencimento_de: de, data_vencimento_ate: ate, pagina: '1', tamanho_pagina: '5',
-        });
+        const r = await chamadaApi(conta, endpoint);
         const texto = await r.text();
         let corpo: unknown;
         try { corpo = JSON.parse(texto); } catch { corpo = texto.slice(0, 200); }
-        const itens = (corpo as { itens?: Record<string, unknown>[] })?.itens ?? [];
-        const p0 = itens[0];
-        // Procura qualquer chave que pareça baixa/pagamento no item.
-        const chaveBaixa = p0 ? Object.keys(p0).find((k) => /baix|pagament|recebiment|liquid/i.test(k)) : undefined;
-        const baixaArr = chaveBaixa ? (p0![chaveBaixa] as unknown) : undefined;
-        resultados.push({
+        // A resposta pode ser array, {itens:[...]}, ou objeto com baixas dentro.
+        let amostra: unknown = corpo;
+        if (Array.isArray(corpo)) amostra = corpo[0];
+        else if (corpo && typeof corpo === 'object') {
+          const o = corpo as Record<string, unknown>;
+          amostra = (o.itens as unknown[])?.[0] ?? (o.baixas as unknown[])?.[0] ?? o;
+        }
+        baixas.push({
           endpoint,
           status: r.status,
-          qtdItens: itens.length,
-          chavesDaParcela: p0 ? Object.keys(p0) : [],
-          chaveBaixaDetectada: chaveBaixa ?? null,
-          chavesDaBaixa: Array.isArray(baixaArr) && baixaArr[0] ? Object.keys(baixaArr[0] as object) : [],
-          amostraPrimeiroItem: p0 ?? null,
+          chavesDaResposta: corpo && typeof corpo === 'object' ? Object.keys(corpo as object) : [],
+          chavesDaBaixa: amostra && typeof amostra === 'object' ? Object.keys(amostra as object) : [],
+          amostra,
         });
       } catch (e) {
-        resultados.push({ endpoint, erro: (e as Error).message });
+        baixas.push({ endpoint, erro: (e as Error).message });
       }
     }
 
-    res.json({ empresa, mes, ano, de, ate, resultados });
+    res.json({
+      empresa, mes, ano,
+      parcelaTestada: paga ? { id: pid, pago: paga.pago, status_traduzido: paga.status_traduzido } : null,
+      baixas,
+    });
   } catch (e) {
     res.status(500).json({ erro: (e as Error).message });
   }
